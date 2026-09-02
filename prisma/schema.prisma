@@ -1,0 +1,149 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id          String     @id @default(cuid())
+  email       String     @unique
+  name        String?
+  createdAt   DateTime   @default(now())
+  workspace   Workspace  @relation(fields: [workspaceId], references: [id])
+  workspaceId String
+  campaigns   Campaign[]
+}
+
+model Workspace {
+  id        String             @id @default(cuid())
+  name      String
+  users     User[]
+  campaigns Campaign[]
+  settings  WorkspaceSetting?
+  createdAt DateTime           @default(now())
+}
+
+model WorkspaceSetting {
+  id              String    @id @default(cuid())
+  workspaceId     String    @unique
+  workspace       Workspace @relation(fields: [workspaceId], references: [id])
+  heyreachApiKey  String?
+  aiProvider      AIProvider @default(OPENROUTER)
+  aiApiKey        String?
+  aiModel         String?
+  resendApiKey    String?
+  updatedAt       DateTime  @updatedAt
+}
+
+model Campaign {
+  id                 String         @id @default(cuid())
+  name               String
+  status             CampaignStatus @default(DRAFT)
+  heyreachCampaignId Int?
+  workspaceId        String
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id])
+  userId      String
+  user        User           @relation(fields: [userId], references: [id])
+  leads       Lead[]
+  sequences   Sequence[]
+  sentCount   Int            @default(0)
+  totalCount  Int            @default(0)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+}
+
+enum AIProvider {
+  OPENROUTER
+  GEMINI
+  OPENAI
+}
+
+enum CampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+}
+
+model Lead {
+  id          String     @id @default(cuid())
+  firstName   String
+  lastName    String?
+  email       String?
+  linkedinUrl String?
+  company     String?
+  jobTitle    String?
+  status      LeadStatus @default(NEW)
+  campaignId  String?
+  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
+  messages    Message[]
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  CONNECTED
+  REPLIED
+  INTERESTED
+  NOT_INTERESTED
+  PROPOSAL_SENT
+}
+
+model Sequence {
+  id         String         @id @default(cuid())
+  name       String
+  steps      SequenceStep[]
+  campaignId String
+  campaign   Campaign       @relation(fields: [campaignId], references: [id])
+  createdAt  DateTime       @default(now())
+}
+
+model SequenceStep {
+  id         String      @id @default(cuid())
+  sequenceId String
+  sequence   Sequence    @relation(fields: [sequenceId], references: [id])
+  stepNumber Int
+  type       StepType
+  template   String      @db.Text
+  delayDays  Int         @default(1)
+  createdAt  DateTime    @default(now())
+}
+
+enum StepType {
+  CONNECTION_REQUEST
+  LINKEDIN_MESSAGE
+  EMAIL
+  FOLLOW_UP
+}
+
+model Message {
+  id        String        @id @default(cuid())
+  leadId    String
+  lead      Lead          @relation(fields: [leadId], references: [id])
+  content   String        @db.Text
+  type      MessageType
+  status    MessageStatus @default(PENDING)
+  sentAt    DateTime?
+  createdAt DateTime      @default(now())
+}
+
+enum MessageType {
+  LINKEDIN_CONNECTION
+  LINKEDIN_MESSAGE
+  EMAIL
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  FAILED
+  REPLIED
+}
