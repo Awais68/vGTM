@@ -37,7 +37,27 @@ model WorkspaceSetting {
   aiApiKey        String?
   aiModel         String?
   resendApiKey    String?
+
+  // Sender identity used by the AI message engine
+  senderName      String?
+  senderTitle     String?
+  defaultContext  String?   @db.Text
+  defaultTone     MessageTone @default(FRIENDLY_DIRECT)
+
+  // Safety guardrails for human-in-the-loop LinkedIn sending.
+  // These CAP how much the operator can send per day; they never bypass anything.
+  dailyConnectionLimit Int   @default(20)
+  dailyMessageLimit    Int   @default(40)
+
   updatedAt       DateTime  @updatedAt
+}
+
+enum MessageTone {
+  FRIENDLY_DIRECT
+  FORMAL
+  CASUAL
+  CONSULTATIVE
+  BLUNT
 }
 
 model Campaign {
@@ -45,12 +65,17 @@ model Campaign {
   name               String
   status             CampaignStatus @default(DRAFT)
   heyreachCampaignId Int?
+  offerContext       String?        @db.Text
+  fromName           String?
+  fromEmail          String?
   workspaceId        String
   workspace   Workspace      @relation(fields: [workspaceId], references: [id])
   userId      String
   user        User           @relation(fields: [userId], references: [id])
   leads       Lead[]
   sequences   Sequence[]
+  queueItems  SendQueueItem[]
+  activities  Activity[]
   sentCount   Int            @default(0)
   totalCount  Int            @default(0)
   createdAt   DateTime       @default(now())
@@ -71,19 +96,30 @@ enum CampaignStatus {
 }
 
 model Lead {
-  id          String     @id @default(cuid())
-  firstName   String
-  lastName    String?
-  email       String?
-  linkedinUrl String?
-  company     String?
-  jobTitle    String?
-  status      LeadStatus @default(NEW)
-  campaignId  String?
-  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
-  messages    Message[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id           String     @id @default(cuid())
+  firstName    String
+  lastName     String?
+  email        String?
+  linkedinUrl  String?
+  company      String?
+  jobTitle     String?
+  status       LeadStatus @default(NEW)
+  unsubscribed Boolean    @default(false)
+  campaignId   String?
+  campaign     Campaign?  @relation(fields: [campaignId], references: [id])
+  messages     Message[]
+  enrollment   SequenceEnrollment?
+  queueItems   SendQueueItem[]
+  activities   Activity[]
+
+  connectedAt  DateTime?
+  repliedAt    DateTime?
+  lastTouchAt  DateTime?
+
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([campaignId, status])
 }
 
 enum LeadStatus {
@@ -97,12 +133,13 @@ enum LeadStatus {
 }
 
 model Sequence {
-  id         String         @id @default(cuid())
-  name       String
-  steps      SequenceStep[]
-  campaignId String
-  campaign   Campaign       @relation(fields: [campaignId], references: [id])
-  createdAt  DateTime       @default(now())
+  id          String               @id @default(cuid())
+  name        String
+  steps       SequenceStep[]
+  enrollments SequenceEnrollment[]
+  campaignId  String
+  campaign    Campaign             @relation(fields: [campaignId], references: [id])
+  createdAt   DateTime             @default(now())
 }
 
 model SequenceStep {
@@ -111,6 +148,7 @@ model SequenceStep {
   sequence   Sequence    @relation(fields: [sequenceId], references: [id])
   stepNumber Int
   type       StepType
+  subject    String?
   template   String      @db.Text
   delayDays  Int         @default(1)
   createdAt  DateTime    @default(now())
@@ -123,15 +161,37 @@ enum StepType {
   FOLLOW_UP
 }
 
+model SequenceEnrollment {
+  id          String           @id @default(cuid())
+  leadId      String           @unique
+  lead        Lead             @relation(fields: [leadId], references: [id])
+  sequenceId  String
+  sequence    Sequence         @relation(fields: [sequenceId], references: [id])
+  currentStep Int              @default(0)
+  status      EnrollmentStatus @default(ACTIVE)
+  nextSendAt  DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  NEEDS_REVIEW
+  STOPPED
+  COMPLETED
+}
+
 model Message {
-  id        String        @id @default(cuid())
-  leadId    String
-  lead      Lead          @relation(fields: [leadId], references: [id])
-  content   String        @db.Text
-  type      MessageType
-  status    MessageStatus @default(PENDING)
-  sentAt    DateTime?
-  createdAt DateTime      @default(now())
+  id               String           @id @default(cuid())
+  leadId           String
+  lead             Lead             @relation(fields: [leadId], references: [id])
+  content          String           @db.Text
+  type             MessageType
+  direction        MessageDirection @default(OUTBOUND)
+  status           MessageStatus    @default(PENDING)
+  resendMessageId  String?
+  sentAt           DateTime?
+  createdAt        DateTime         @default(now())
 }
 
 enum MessageType {
@@ -140,10 +200,91 @@ enum MessageType {
   EMAIL
 }
 
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
 enum MessageStatus {
   PENDING
   SENT
   DELIVERED
   FAILED
   REPLIED
+}
+
+
+/// A single AI-drafted message waiting for a human to review and send.
+/// Nothing in this app talks to LinkedIn: the operator copies the text,
+/// sends it in their own browser, then marks it sent here.
+model SendQueueItem {
+  id           String        @id @default(cuid())
+  workspaceId  String
+  leadId       String
+  lead         Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId   String?
+  campaign     Campaign?     @relation(fields: [campaignId], references: [id])
+
+  channel      QueueChannel
+  stepNumber   Int           @default(0)
+  content      String        @db.Text
+  aiModel      String?
+  edited       Boolean       @default(false)
+
+  status       QueueStatus   @default(DRAFT)
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  skipReason   String?
+
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@index([workspaceId, status, channel])
+  @@index([campaignId, status])
+  @@unique([leadId, channel, stepNumber])
+}
+
+enum QueueChannel {
+  LINKEDIN_CONNECTION
+  LINKEDIN_MESSAGE
+  EMAIL
+}
+
+enum QueueStatus {
+  DRAFT
+  READY
+  SENT
+  SKIPPED
+}
+
+/// Append-only event log. Every dashboard number is derived from this table,
+/// so analytics stay correct even if a lead is later edited or re-enrolled.
+model Activity {
+  id          String       @id @default(cuid())
+  workspaceId String
+  leadId      String?
+  lead        Lead?        @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign?    @relation(fields: [campaignId], references: [id])
+
+  type        ActivityType
+  channel     QueueChannel?
+  stepNumber  Int?
+  note        String?      @db.Text
+  createdAt   DateTime     @default(now())
+
+  @@index([workspaceId, type, createdAt])
+  @@index([campaignId, type])
+}
+
+enum ActivityType {
+  QUEUED
+  SENT
+  CONNECTION_ACCEPTED
+  REPLIED
+  INTERESTED
+  NOT_INTERESTED
+  MEETING_BOOKED
+  UNSUBSCRIBED
+  SKIPPED
 }

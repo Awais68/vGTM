@@ -47,17 +47,23 @@ interface ImportResults {
   errors: Array<{ row: number; message: string }>
 }
 
-export function LeadImporter() {
+interface LeadImporterProps {
+  campaignId?: string
+  onImported?: (results: ImportResults) => void
+}
+
+export function LeadImporter({ campaignId, onImported }: LeadImporterProps = {}) {
   const [file, setFile] = useState<File | null>(null)
   const [preview, setPreview] = useState<CsvPreviewRow[]>([])
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([])
-  const [selectedCampaign, setSelectedCampaign] = useState<string>("")
+  const [selectedCampaign, setSelectedCampaign] = useState<string>(campaignId ?? "")
   const [importing, setImporting] = useState(false)
   const [results, setResults] = useState<ImportResults | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
+    if (campaignId) return
     async function fetchCampaigns() {
       try {
         const response = await fetch("/api/campaigns")
@@ -78,7 +84,7 @@ export function LeadImporter() {
       }
     }
     fetchCampaigns()
-  }, [])
+  }, [campaignId])
 
   const parsePreview = useCallback((text: string) => {
     const lines = text.trim().split("\n")
@@ -161,6 +167,7 @@ export function LeadImporter() {
 
       if (json.success) {
         setResults(json.data)
+        onImported?.(json.data)
       } else {
         setResults({
           imported: 0,
@@ -278,24 +285,26 @@ export function LeadImporter() {
             </div>
           )}
 
-          <div className="space-y-2">
-            <Label htmlFor="campaign">Campaign (optional)</Label>
-            <Select
-              value={selectedCampaign}
-              onValueChange={setSelectedCampaign}
-            >
-              <SelectTrigger id="campaign" className="w-full">
-                <SelectValue placeholder="Select a campaign..." />
-              </SelectTrigger>
-              <SelectContent>
-                {campaigns.map((c) => (
-                  <SelectItem key={c.id} value={c.id}>
-                    {c.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {!campaignId && (
+            <div className="space-y-2">
+              <Label htmlFor="campaign">Campaign (optional)</Label>
+              <Select
+                value={selectedCampaign}
+                onValueChange={setSelectedCampaign}
+              >
+                <SelectTrigger id="campaign" className="w-full">
+                  <SelectValue placeholder="Select a campaign..." />
+                </SelectTrigger>
+                <SelectContent>
+                  {campaigns.map((c) => (
+                    <SelectItem key={c.id} value={c.id}>
+                      {c.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
 
           <Button
             onClick={handleImport}

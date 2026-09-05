@@ -10,9 +10,12 @@ export interface AIConfig {
   model: string
 }
 
+// Zero-cost defaults. Gemini's own API has a free tier; OpenRouter ":free"
+// models cost nothing but are rate limited. Override per workspace in the
+// Admin Panel, or globally with AI_MODEL.
 export const DEFAULT_MODELS: Record<AIProvider, string> = {
-  OPENROUTER: 'google/gemini-flash-1.5',
-  GEMINI: 'gemini-1.5-flash',
+  OPENROUTER: 'google/gemini-2.0-flash-exp:free',
+  GEMINI: 'gemini-2.0-flash',
   OPENAI: 'gpt-4o-mini',
 }
 

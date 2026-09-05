@@ -34,10 +34,12 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
       onToggle: () => setLinkedinOpen(!linkedinOpen),
       submenu: [
         { id: "linkedin-accounts", label: "LinkedIn Accounts" },
+        { id: "send-queue", label: "Send Queue" },
         { id: "leads", label: "Leads" },
         { id: "my-network", label: "My network" },
         { id: "campaigns", label: "Campaigns" },
         { id: "inbox", label: "Inbox" },
+        { id: "needs-review", label: "Needs Review" },
       ],
     },
     { id: "ad-data", label: "Ad Data", icon: Database },

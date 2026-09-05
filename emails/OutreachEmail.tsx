@@ -15,6 +15,7 @@ interface Props {
   senderName: string
   senderTitle: string
   messageContent: string
+  leadId: string
   unsubscribeToken: string
 }
 
@@ -23,9 +24,10 @@ export default function OutreachEmail({
   senderName,
   senderTitle,
   messageContent,
+  leadId,
   unsubscribeToken,
 }: Props) {
-  const unsubscribeUrl = `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/email/unsubscribe?token=${unsubscribeToken}`
+  const unsubscribeUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/email/unsubscribe?leadId=${leadId}&token=${unsubscribeToken}`
 
   return (
     <Html>

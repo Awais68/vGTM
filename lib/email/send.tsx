@@ -75,6 +75,7 @@ export async function sendOutreachEmail(
           senderName={fromName}
           senderTitle=""
           messageContent={messageContent}
+          leadId={leadId}
           unsubscribeToken={unsubscribeToken}
         />
       ),
@@ -100,6 +101,7 @@ export async function sendOutreachEmail(
         type: "EMAIL",
         status: "SENT",
         sentAt: new Date(),
+        resendMessageId: data?.id,
       },
     })
 

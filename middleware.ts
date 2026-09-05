@@ -2,6 +2,13 @@ import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
 export async function middleware(request: NextRequest) {
+  // TEMPORARY (preview only): skip Supabase login gate, use backend as already
+  // configured via .env (HEYREACH_API_KEY / AI_API_KEY / RESEND_API_KEY).
+  // Remove NEXT_PUBLIC_BYPASS_SETUP from .env to restore normal login flow.
+  if (process.env.NEXT_PUBLIC_BYPASS_SETUP === "true") {
+    return NextResponse.next({ request: { headers: request.headers } })
+  }
+
   let supabaseResponse = NextResponse.next({
     request: {
       headers: request.headers,

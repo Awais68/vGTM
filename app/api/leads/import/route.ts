@@ -1,30 +1,17 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { requireWorkspace } from "@/lib/auth/get-current-user"
 import { prisma } from "@/lib/prisma"
 import { parseLeadsCSV, importLeadsToDB } from "@/lib/leads/import"
 import { getHeyReachClient } from "@/lib/heyreach/get-client"
 
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized", code: "UNAUTHORIZED" },
-        { status: 401 }
-      )
-    }
-
-    const dbUser = await prisma.user.findUnique({
-      where: { email: user.email! },
-      select: { id: true, workspaceId: true },
-    })
+    const dbUser = await requireWorkspace()
 
     if (!dbUser) {
       return NextResponse.json(
-        { success: false, error: "User not found", code: "USER_NOT_FOUND" },
-        { status: 404 }
+        { success: false, error: "Unauthorized", code: "UNAUTHORIZED" },
+        { status: 401 }
       )
     }
 

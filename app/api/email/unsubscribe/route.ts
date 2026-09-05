@@ -5,8 +5,9 @@ import { verifyUnsubscribeToken } from "@/lib/email/send"
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url)
   const token = searchParams.get("token")
+  const leadId = searchParams.get("leadId")
 
-  if (!token) {
+  if (!token || !leadId) {
     return new Response(
       getUnsubscribePage("Invalid unsubscribe link.", false),
       {
@@ -16,23 +17,19 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  const message = await prisma.message.findFirst({
-    where: { status: "SENT" },
-    orderBy: { createdAt: "desc" },
-    select: { leadId: true },
-  })
-
-  if (!message) {
+  if (!verifyUnsubscribeToken(leadId, token)) {
     return new Response(
-      getUnsubscribePage("You have been unsubscribed.", true),
+      getUnsubscribePage("Invalid unsubscribe link.", false),
       {
-        status: 200,
+        status: 400,
         headers: { "Content-Type": "text/html; charset=utf-8" },
       }
     )
   }
 
-  if (!verifyUnsubscribeToken(message.leadId, token)) {
+  const lead = await prisma.lead.findUnique({ where: { id: leadId } })
+
+  if (!lead) {
     return new Response(
       getUnsubscribePage("Invalid unsubscribe link.", false),
       {
@@ -43,8 +40,13 @@ export async function GET(request: NextRequest) {
   }
 
   await prisma.lead.update({
-    where: { id: message.leadId },
-    data: { status: "NOT_INTERESTED" },
+    where: { id: leadId },
+    data: { unsubscribed: true, status: "NOT_INTERESTED" },
+  })
+
+  await prisma.sequenceEnrollment.updateMany({
+    where: { leadId, status: { in: ["ACTIVE", "NEEDS_REVIEW"] } },
+    data: { status: "STOPPED", nextSendAt: null },
   })
 
   return new Response(

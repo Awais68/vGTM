@@ -147,7 +147,7 @@ export async function generateProposal(
 
   const { text } = await generateText({
     model,
-    maxTokens: 800,
+    maxOutputTokens: 800,
     prompt: `Write a professional business proposal in clean markdown.
 
 Client info:
