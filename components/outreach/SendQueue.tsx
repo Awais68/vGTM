@@ -44,6 +44,7 @@ interface QueueItem {
   id: string
   channel: Channel
   stepNumber: number
+  subject: string | null
   content: string
   status: Status
   edited: boolean
@@ -184,7 +185,11 @@ export function SendQueue() {
 
   async function handleCopy(item: QueueItem) {
     try {
-      await navigator.clipboard.writeText(item.content)
+      await navigator.clipboard.writeText(
+        item.channel === "EMAIL" && item.subject
+          ? `Subject: ${item.subject}\n\n${item.content}`
+          : item.content
+      )
       setCopiedId(item.id)
       setTimeout(() => setCopiedId((id) => (id === item.id ? null : id)), 2000)
     } catch {
@@ -192,13 +197,21 @@ export function SendQueue() {
     }
   }
 
-  async function handleSaveContent(item: QueueItem, content: string) {
-    if (content === item.content) return
-    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, content, edited: true } : i)))
+  async function handleSaveContent(item: QueueItem, content: string, subject?: string | null) {
+    const subjectChanged = subject !== undefined && subject !== item.subject
+    if (content === item.content && !subjectChanged) return
+
+    setItems((prev) =>
+      prev.map((i) =>
+        i.id === item.id
+          ? { ...i, content, ...(subjectChanged ? { subject: subject ?? null } : {}), edited: true }
+          : i
+      )
+    )
     await fetch(`/api/queue/${item.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, ...(subjectChanged ? { subject } : {}) }),
     })
   }
 
@@ -219,7 +232,11 @@ export function SendQueue() {
 
       if (action === "regenerate") {
         setItems((prev) =>
-          prev.map((i) => (i.id === item.id ? { ...i, content: json.data.content, edited: false } : i))
+          prev.map((i) =>
+            i.id === item.id
+              ? { ...i, subject: json.data.subject ?? null, content: json.data.content, edited: false }
+              : i
+          )
         )
         return
       }
@@ -410,7 +427,7 @@ export function SendQueue() {
               blocked={blockedChannels.has(item.channel)}
               senderName={item.linkedInAccount?.name ?? null}
               onCopy={() => handleCopy(item)}
-              onSave={(content) => handleSaveContent(item, content)}
+              onSave={(content, subject) => handleSaveContent(item, content, subject)}
               onAction={(action) => handleAction(item, action)}
             />
           ))}
@@ -436,14 +453,19 @@ function QueueCard({
   blocked: boolean
   senderName: string | null
   onCopy: () => void
-  onSave: (content: string) => void
+  onSave: (content: string, subject?: string | null) => void
   onAction: (action: "sent" | "skip" | "regenerate") => void
 }) {
   const [content, setContent] = useState(item.content)
+  const [subject, setSubject] = useState(item.subject ?? "")
 
   useEffect(() => {
     setContent(item.content)
   }, [item.content])
+
+  useEffect(() => {
+    setSubject(item.subject ?? "")
+  }, [item.subject])
 
   const limit = CHAR_LIMIT[item.channel]
   const remaining = limit - content.length
@@ -471,12 +493,23 @@ function QueueCard({
         </div>
       </div>
 
+      {item.channel === "EMAIL" && (
+        <Input
+          value={subject}
+          readOnly={readOnly}
+          placeholder="Subject line"
+          onChange={(e) => setSubject(e.target.value)}
+          onBlur={() => !readOnly && onSave(content, subject.trim() || null)}
+          className="font-medium"
+        />
+      )}
+
       <div className="relative">
         <Textarea
           value={content}
           readOnly={readOnly}
           onChange={(e) => setContent(e.target.value)}
-          onBlur={() => !readOnly && onSave(content)}
+          onBlur={() => !readOnly && onSave(content, item.channel === "EMAIL" ? subject.trim() || null : undefined)}
           rows={item.channel === "LINKEDIN_CONNECTION" ? 3 : 5}
           className="pr-16 resize-none"
         />

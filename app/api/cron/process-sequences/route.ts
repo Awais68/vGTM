@@ -17,16 +17,39 @@ export async function GET(request: NextRequest) {
     select: { id: true },
   })
 
-  const results = { processed: 0, sent: 0, queued: 0, completed: 0, skipped: 0 }
+  const results = { processed: 0, sent: 0, queued: 0, completed: 0, retried: 0, skipped: 0, errored: 0 }
+  const errors: { enrollmentId: string; error: string }[] = []
 
+  // One bad enrollment (AI outage, malformed lead, provider hiccup) must not
+  // take the rest of the batch down with it.
   for (const enrollment of due) {
-    const result = await processDueStep(enrollment.id)
     results.processed++
-    if (result.outcome === "sent") results.sent++
-    else if (result.outcome === "queued") results.queued++
-    else if (result.outcome === "completed") results.completed++
-    else results.skipped++
+    try {
+      const result = await processDueStep(enrollment.id)
+      if (result.outcome === "sent") results.sent++
+      else if (result.outcome === "queued") results.queued++
+      else if (result.outcome === "completed") results.completed++
+      else if (result.outcome === "retry") results.retried++
+      else results.skipped++
+    } catch (error) {
+      results.errored++
+      const message = error instanceof Error ? error.message : "processing failed"
+      errors.push({ enrollmentId: enrollment.id, error: message })
+      console.error(`[cron] enrollment ${enrollment.id} failed:`, message)
+
+      // Push it out an hour so a hard-failing row cannot hog every batch.
+      await prisma.sequenceEnrollment
+        .update({
+          where: { id: enrollment.id },
+          data: {
+            failureCount: { increment: 1 },
+            lastError: message,
+            nextSendAt: new Date(Date.now() + 60 * 60 * 1000),
+          },
+        })
+        .catch(() => {})
+    }
   }
 
-  return NextResponse.json({ success: true, data: results })
+  return NextResponse.json({ success: true, data: { ...results, errors: errors.slice(0, 10) } })
 }

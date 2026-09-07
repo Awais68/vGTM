@@ -17,6 +17,7 @@ export const generateQueueSchema = z.object({
 
 export const updateQueueItemSchema = z.object({
   content: z.string().min(1).max(4000).optional(),
+  subject: z.string().max(200).nullable().optional(),
   status: z.enum(["DRAFT", "READY"]).optional(),
   scheduledFor: z.string().datetime().nullable().optional(),
 })

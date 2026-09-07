@@ -199,6 +199,10 @@ model SequenceEnrollment {
   currentStep Int              @default(0)
   status      EnrollmentStatus @default(ACTIVE)
   nextSendAt  DateTime?
+  // Consecutive transient send failures. Reset on any successful step; the
+  // engine stops the enrollment once it crosses the retry ceiling.
+  failureCount Int             @default(0)
+  lastError    String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 }
@@ -258,6 +262,8 @@ model SendQueueItem {
 
   channel    QueueChannel
   stepNumber Int          @default(0)
+  // Email drafts carry their own subject line; LinkedIn channels leave it null.
+  subject    String?
   content    String       @db.Text
   aiModel    String?
   edited     Boolean      @default(false)

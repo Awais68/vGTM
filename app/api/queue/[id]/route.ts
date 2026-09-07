@@ -23,6 +23,7 @@ export async function PATCH(
   try {
     const item = await updateItem(ctx.workspaceId, id, {
       content: parsed.data.content,
+      subject: parsed.data.subject,
       status: parsed.data.status,
       scheduledFor:
         parsed.data.scheduledFor === undefined

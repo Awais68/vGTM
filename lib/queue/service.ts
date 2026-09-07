@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { QueueChannel, QueueStatus } from "@prisma/client"
 import {
   draftConnectionNote,
+  draftEmail,
   draftFollowUp,
   loadSenderContext,
   type SenderContext,
@@ -113,10 +114,16 @@ export async function generateQueue(options: GenerateOptions): Promise<GenerateR
 
       const history = lead.queueItems.map((q) => q.content)
 
-      const content =
-        channel === "LINKEDIN_CONNECTION"
-          ? await draftConnectionNote(workspaceId, lead, sender)
-          : await draftFollowUp(workspaceId, lead, sender, stepNumber, history)
+      // Email needs its own subject line, so it gets its own drafter — a
+      // LinkedIn follow-up body sent as an email arrives without a subject.
+      const draft = await draftForChannel({
+        workspaceId,
+        channel,
+        lead,
+        sender,
+        stepNumber,
+        history,
+      })
 
       await prisma.sendQueueItem.create({
         data: {
@@ -125,7 +132,8 @@ export async function generateQueue(options: GenerateOptions): Promise<GenerateR
           campaignId,
           channel,
           stepNumber,
-          content,
+          subject: draft.subject,
+          content: draft.content,
           linkedInAccountId,
           status: "DRAFT",
         },
@@ -153,6 +161,39 @@ export async function generateQueue(options: GenerateOptions): Promise<GenerateR
   return result
 }
 
+interface DraftInput {
+  workspaceId: string
+  channel: QueueChannel
+  lead: Parameters<typeof draftConnectionNote>[1]
+  sender: SenderContext
+  stepNumber: number
+  history?: string[]
+}
+
+/** One place that decides which drafter a channel gets. */
+async function draftForChannel({
+  workspaceId,
+  channel,
+  lead,
+  sender,
+  stepNumber,
+  history = [],
+}: DraftInput): Promise<{ subject: string | null; content: string }> {
+  if (channel === "LINKEDIN_CONNECTION") {
+    return { subject: null, content: await draftConnectionNote(workspaceId, lead, sender) }
+  }
+
+  if (channel === "EMAIL") {
+    const email = await draftEmail(workspaceId, lead, sender, stepNumber)
+    return { subject: email.subject, content: email.body }
+  }
+
+  return {
+    subject: null,
+    content: await draftFollowUp(workspaceId, lead, sender, stepNumber, history),
+  }
+}
+
 export async function regenerateItem(workspaceId: string, itemId: string, tone?: Tone) {
   const item = await prisma.sendQueueItem.findFirst({
     where: { id: itemId, workspaceId },
@@ -167,14 +208,17 @@ export async function regenerateItem(workspaceId: string, itemId: string, tone?:
     tone,
   })
 
-  const content =
-    item.channel === "LINKEDIN_CONNECTION"
-      ? await draftConnectionNote(workspaceId, item.lead, sender)
-      : await draftFollowUp(workspaceId, item.lead, sender, item.stepNumber)
+  const draft = await draftForChannel({
+    workspaceId,
+    channel: item.channel,
+    lead: item.lead,
+    sender,
+    stepNumber: item.stepNumber,
+  })
 
   return prisma.sendQueueItem.update({
     where: { id: item.id },
-    data: { content, edited: false, status: "DRAFT" },
+    data: { subject: draft.subject, content: draft.content, edited: false, status: "DRAFT" },
   })
 }
 
@@ -325,7 +369,12 @@ export async function skipItem(workspaceId: string, itemId: string, reason?: str
 export async function updateItem(
   workspaceId: string,
   itemId: string,
-  data: { content?: string; status?: QueueStatus; scheduledFor?: Date | null }
+  data: {
+    content?: string
+    subject?: string | null
+    status?: QueueStatus
+    scheduledFor?: Date | null
+  }
 ) {
   const item = await prisma.sendQueueItem.findFirst({ where: { id: itemId, workspaceId } })
   if (!item) throw new Error("Queue item not found")
@@ -335,6 +384,7 @@ export async function updateItem(
     where: { id: item.id },
     data: {
       ...(data.content !== undefined ? { content: data.content, edited: true } : {}),
+      ...(data.subject !== undefined ? { subject: data.subject, edited: true } : {}),
       ...(data.status !== undefined ? { status: data.status } : {}),
       ...(data.scheduledFor !== undefined ? { scheduledFor: data.scheduledFor } : {}),
     },
