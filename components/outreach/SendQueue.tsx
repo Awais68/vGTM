@@ -24,6 +24,7 @@ import {
   ShieldAlert,
 } from "lucide-react"
 import { toast } from "sonner"
+import { useSenderAccounts } from "@/components/linkedin/sender-context"
 
 type Channel = "LINKEDIN_CONNECTION" | "LINKEDIN_MESSAGE" | "EMAIL"
 type Status = "DRAFT" | "READY" | "SENT" | "SKIPPED"
@@ -49,6 +50,8 @@ interface QueueItem {
   sentAt: string | null
   lead: QueueLead
   campaign: { id: string; name: string } | null
+  linkedInAccountId: string | null
+  linkedInAccount: { id: string; name: string } | null
 }
 
 interface Usage {
@@ -85,6 +88,8 @@ export function SendQueue() {
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [statusFilter, setStatusFilter] = useState<Status>("DRAFT")
+  const [senderFilter, setSenderFilter] = useState<"active" | "all">("active")
+  const { accounts, activeAccount, activeAccountId, refresh: refreshSenders } = useSenderAccounts()
 
   const [genCampaign, setGenCampaign] = useState<string>("")
   const [genChannel, setGenChannel] = useState<Channel>("LINKEDIN_CONNECTION")
@@ -95,7 +100,9 @@ export function SendQueue() {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const response = await fetch(`/api/queue?status=${statusFilter}&limit=100`)
+      const senderParam =
+        senderFilter === "active" && activeAccountId ? `&linkedInAccountId=${activeAccountId}` : ""
+      const response = await fetch(`/api/queue?status=${statusFilter}&limit=100${senderParam}`)
       const json = await response.json()
       if (json.success) {
         setItems(json.data.items)
@@ -108,7 +115,7 @@ export function SendQueue() {
     } finally {
       setLoading(false)
     }
-  }, [statusFilter])
+  }, [statusFilter, senderFilter, activeAccountId])
 
   useEffect(() => {
     load()
@@ -141,6 +148,11 @@ export function SendQueue() {
           stepNumber: genChannel === "LINKEDIN_CONNECTION" ? 0 : Number(genStep),
           limit: Number(genCount),
           tone: genTone,
+          // Drafts belong to whichever sender is active in the header, so the
+          // per-account daily cap is the one that gets enforced on send.
+          ...(genChannel !== "EMAIL" && activeAccountId
+            ? { linkedInAccountId: activeAccountId, ignoreSchedule: true }
+            : {}),
         }),
       })
       const json = await response.json()
@@ -148,13 +160,19 @@ export function SendQueue() {
         toast.error(json.error ?? "Generation failed")
         return
       }
-      const { created, failures } = json.data
+      const { created, failures, blockedByCapacity } = json.data
       toast.success(
         created === 0
           ? "No new drafts — every eligible lead already has one for this step"
           : `${created} draft${created === 1 ? "" : "s"} added to the queue`
       )
+      if (blockedByCapacity) {
+        toast.warning(
+          `${activeAccount?.name ?? "This sender"} has no headroom left today — generation stopped early.`
+        )
+      }
       if (failures?.length) toast.warning(`${failures.length} lead(s) failed to generate`)
+      void refreshSenders()
       setStatusFilter("DRAFT")
       load()
     } catch {
@@ -209,6 +227,7 @@ export function SendQueue() {
       setItems((prev) => prev.filter((i) => i.id !== item.id))
       if (action === "sent") {
         toast.success(`Logged as sent to ${item.lead.firstName}`)
+        void refreshSenders()
         setUsage((prev) =>
           prev.map((u) =>
             u.channel === item.channel
@@ -236,6 +255,29 @@ export function SendQueue() {
           Nothing leaves this app on its own.
         </p>
       </div>
+
+      {activeAccount && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-cyan-200 bg-cyan-50 p-3 text-sm">
+          <div>
+            <span className="font-medium">Sending as {activeAccount.name}</span>
+            <span className="ml-2 text-gray-600">
+              connections {activeAccount.usage.connection.sentToday}/{activeAccount.usage.connection.limit}
+              {" · "}
+              messages {activeAccount.usage.message.sentToday}/{activeAccount.usage.message.limit}
+              {activeAccount.withinWorkingHours ? "" : " · outside working hours"}
+            </span>
+          </div>
+          {accounts.length > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setSenderFilter(senderFilter === "active" ? "all" : "active")}
+            >
+              {senderFilter === "active" ? "Show every sender's queue" : "Show only this sender"}
+            </Button>
+          )}
+        </div>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
         {usage.map((u) => (
@@ -366,6 +408,7 @@ export function SendQueue() {
               busy={busyId === item.id}
               copied={copiedId === item.id}
               blocked={blockedChannels.has(item.channel)}
+              senderName={item.linkedInAccount?.name ?? null}
               onCopy={() => handleCopy(item)}
               onSave={(content) => handleSaveContent(item, content)}
               onAction={(action) => handleAction(item, action)}
@@ -382,6 +425,7 @@ function QueueCard({
   busy,
   copied,
   blocked,
+  senderName,
   onCopy,
   onSave,
   onAction,
@@ -390,6 +434,7 @@ function QueueCard({
   busy: boolean
   copied: boolean
   blocked: boolean
+  senderName: string | null
   onCopy: () => void
   onSave: (content: string) => void
   onAction: (action: "sent" | "skip" | "regenerate") => void
@@ -422,6 +467,7 @@ function QueueCard({
           <Badge variant="secondary">{CHANNEL_LABEL[item.channel]}</Badge>
           {item.stepNumber > 0 && <Badge variant="outline">Step {item.stepNumber}</Badge>}
           {item.edited && <Badge className="bg-amber-100 text-amber-700">edited</Badge>}
+          {senderName && <Badge variant="outline">from {senderName}</Badge>}
         </div>
       </div>
 

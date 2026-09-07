@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma"
 import { requireWorkspace, unauthorized } from "@/lib/auth/get-current-user"
 import { logActivity } from "@/lib/queue/service"
 import { outcomeSchema } from "@/lib/validators/queue"
+import { runTrigger } from "@/lib/automation/engine"
 import type { LeadStatus } from "@prisma/client"
 
 const STATUS_BY_OUTCOME: Record<string, LeadStatus> = {
@@ -31,8 +32,13 @@ export async function POST(
     )
   }
 
+  // Leads imported without a campaign are workspace-scoped directly, so both
+  // paths have to be accepted here.
   const lead = await prisma.lead.findFirst({
-    where: { id, campaign: { workspaceId: ctx.workspaceId } },
+    where: {
+      id,
+      OR: [{ workspaceId: ctx.workspaceId }, { campaign: { workspaceId: ctx.workspaceId } }],
+    },
     select: { id: true, campaignId: true, connectedAt: true },
   })
 
@@ -86,5 +92,19 @@ export async function POST(
     })
   }
 
-  return NextResponse.json({ success: true, data: updated })
+  // Let automation react to what just happened (follow-up drafts after a
+  // connection is accepted, hand-off rules after a reply, and so on).
+  const automation = await runTrigger({
+    workspaceId: ctx.workspaceId,
+    trigger:
+      outcome === "CONNECTION_ACCEPTED"
+        ? "CONNECTION_ACCEPTED"
+        : outcome === "REPLIED" || outcome === "INTERESTED"
+          ? "REPLY_RECEIVED"
+          : "LEAD_STATUS_CHANGED",
+    campaignId: lead.campaignId,
+    leadId: lead.id,
+  }).catch(() => null)
+
+  return NextResponse.json({ success: true, data: updated, automation })
 }

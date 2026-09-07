@@ -1,4 +1,17 @@
 import { prisma } from "@/lib/prisma"
+import type { ImportSource, Prisma } from "@prisma/client"
+import {
+  cleanText,
+  dedupeKey,
+  normalizeEmail,
+  normalizeLinkedInUrl,
+  normalizePhone,
+  splitFullName,
+  type ColumnMapping,
+} from "./normalize"
+import type { HeuristicLead } from "./text-heuristics"
+import { parseDelimitedText } from "./parsers/csv"
+import { detectMapping } from "./normalize"
 
 export interface ParsedLead {
   firstName: string
@@ -7,131 +20,330 @@ export interface ParsedLead {
   linkedinUrl: string | null
   company: string | null
   jobTitle: string | null
+  phone: string | null
+  location: string | null
+  industry: string | null
+  customFields: Record<string, string> | null
+}
+
+export interface RowError {
+  row: number
+  message: string
+}
+
+export interface MappingResult {
+  valid: ParsedLead[]
+  errors: RowError[]
+  /** Rows dropped because an earlier row in the same file was the same person. */
+  duplicatesInFile: number
 }
 
 export interface ImportResult {
   imported: number
   updated: number
+  skipped: number
   failed: number
-  errors: Array<{ row: number; message: string }>
+  errors: RowError[]
+  batchId?: string
 }
 
-export function parseLeadsCSV(csvContent: string): {
-  valid: ParsedLead[]
-  errors: Array<{ row: number; message: string }>
-} {
-  const lines = csvContent.trim().split("\n")
-  if (lines.length < 2) {
-    return { valid: [], errors: [{ row: 0, message: "CSV must have a header row and at least one data row" }] }
-  }
+const CORE_FIELDS: (keyof ParsedLead)[] = [
+  "firstName",
+  "lastName",
+  "email",
+  "linkedinUrl",
+  "company",
+  "jobTitle",
+  "phone",
+  "location",
+  "industry",
+]
 
-  const header = lines[0].split(",").map((h) => h.trim().toLowerCase())
-  const firstNameIdx = header.indexOf("firstname")
-  const lastNameIdx = header.indexOf("lastname")
-  const emailIdx = header.indexOf("email")
-  const linkedinIdx = header.indexOf("linkedinurl")
-  const companyIdx = header.indexOf("company")
-  const jobTitleIdx = header.indexOf("jobtitle")
-
-  if (firstNameIdx === -1) {
-    return { valid: [], errors: [{ row: 0, message: "Missing required column: firstName" }] }
-  }
-
+/**
+ * Applies an operator-confirmed column mapping to raw rows.
+ *
+ * A lead needs a name plus at least one way to reach them; anything else is
+ * reported as a row error rather than silently dropped, so the import screen
+ * can show exactly which rows failed and why.
+ */
+export function applyMapping(
+  rows: Record<string, string>[],
+  mapping: ColumnMapping,
+  options: { keepUnmappedColumns?: boolean } = {}
+): MappingResult {
   const valid: ParsedLead[] = []
-  const errors: Array<{ row: number; message: string }> = []
+  const errors: RowError[] = []
+  const seen = new Set<string>()
+  let duplicatesInFile = 0
 
-  for (let i = 1; i < lines.length; i++) {
-    const cols = lines[i].split(",").map((c) => c.trim())
-    const row = i + 1
+  const mappedColumns = new Set(Object.values(mapping).filter(Boolean) as string[])
 
-    const firstName = cols[firstNameIdx]
-    if (!firstName) {
-      errors.push({ row, message: "firstName is required" })
-      continue
+  rows.forEach((row, index) => {
+    const rowNumber = index + 2 // +1 for the header, +1 for 1-based display
+
+    let firstName = cleanText(mapping.firstName ? row[mapping.firstName] : null, 80) ?? ""
+    let lastName = cleanText(mapping.lastName ? row[mapping.lastName] : null, 80)
+
+    if (!firstName && mapping.fullName) {
+      const full = cleanText(row[mapping.fullName], 160)
+      if (full) {
+        const split = splitFullName(full)
+        firstName = split.firstName
+        lastName = lastName ?? split.lastName
+      }
     }
 
-    const email = emailIdx !== -1 ? cols[emailIdx] || null : null
-    const linkedinUrl = linkedinIdx !== -1 ? cols[linkedinIdx] || null : null
+    const email = normalizeEmail(mapping.email ? row[mapping.email] : null)
+    const linkedinUrl = normalizeLinkedInUrl(mapping.linkedinUrl ? row[mapping.linkedinUrl] : null)
+
+    if (!firstName) {
+      errors.push({ row: rowNumber, message: "No first name — map a First name or Full name column" })
+      return
+    }
 
     if (!email && !linkedinUrl) {
-      errors.push({ row, message: "At least one of email or linkedinUrl is required" })
-      continue
+      errors.push({ row: rowNumber, message: "Needs an email or a LinkedIn URL" })
+      return
+    }
+
+    const key = dedupeKey({ email, linkedinUrl })
+    if (key && seen.has(key)) {
+      duplicatesInFile++
+      return
+    }
+    if (key) seen.add(key)
+
+    let customFields: Record<string, string> | null = null
+    if (options.keepUnmappedColumns) {
+      const extras: Record<string, string> = {}
+      for (const [column, value] of Object.entries(row)) {
+        if (mappedColumns.has(column)) continue
+        const clean = cleanText(value, 200)
+        if (clean) extras[column] = clean
+      }
+      if (Object.keys(extras).length > 0) customFields = extras
     }
 
     valid.push({
       firstName,
-      lastName: lastNameIdx !== -1 ? cols[lastNameIdx] || null : null,
+      lastName,
       email,
       linkedinUrl,
-      company: companyIdx !== -1 ? cols[companyIdx] || null : null,
-      jobTitle: jobTitleIdx !== -1 ? cols[jobTitleIdx] || null : null,
+      company: cleanText(mapping.company ? row[mapping.company] : null, 160),
+      jobTitle: cleanText(mapping.jobTitle ? row[mapping.jobTitle] : null, 160),
+      phone: normalizePhone(mapping.phone ? row[mapping.phone] : null),
+      location: cleanText(mapping.location ? row[mapping.location] : null, 160),
+      industry: cleanText(mapping.industry ? row[mapping.industry] : null, 120),
+      customFields,
     })
-  }
+  })
 
-  return { valid, errors }
+  return { valid, errors, duplicatesInFile }
 }
 
-export async function importLeadsToDB(
-  leads: ParsedLead[],
-  campaignId: string
-): Promise<ImportResult> {
-  let imported = 0
-  let updated = 0
-  let failed = 0
-  const errors: Array<{ row: number; message: string }> = []
+/** Extraction output already uses canonical field names. */
+export function leadsFromExtraction(extracted: HeuristicLead[]): MappingResult {
+  const rows = extracted.map((lead) => ({
+    firstName: lead.firstName,
+    lastName: lead.lastName,
+    email: lead.email,
+    linkedinUrl: lead.linkedinUrl,
+    company: lead.company,
+    jobTitle: lead.jobTitle,
+  }))
+
+  return applyMapping(rows, {
+    firstName: "firstName",
+    lastName: "lastName",
+    email: "email",
+    linkedinUrl: "linkedinUrl",
+    company: "company",
+    jobTitle: "jobTitle",
+  })
+}
+
+export interface CommitOptions {
+  workspaceId: string
+  campaignId?: string | null
+  leads: ParsedLead[]
+  source?: ImportSource
+  fileName?: string
+  fileType?: string
+  mapping?: ColumnMapping
+  totalRows?: number
+  parseErrors?: RowError[]
+  /** Overwrite fields on a lead we already have. Off means "add new only". */
+  updateExisting?: boolean
+}
+
+/**
+ * Writes the leads and records an ImportBatch so a bad import can be traced
+ * (and, later, undone) instead of vanishing into the leads table.
+ */
+export async function commitImport(options: CommitOptions): Promise<ImportResult> {
+  const {
+    workspaceId,
+    campaignId = null,
+    leads,
+    source = "FILE",
+    fileName = "manual",
+    fileType = "csv",
+    mapping,
+    totalRows,
+    parseErrors = [],
+    updateExisting = true,
+  } = options
+
+  const batch = await prisma.importBatch.create({
+    data: {
+      workspaceId,
+      campaignId,
+      fileName,
+      fileType,
+      source,
+      totalRows: totalRows ?? leads.length,
+      status: "PARSED",
+      mapping: (mapping ?? undefined) as Prisma.InputJsonValue | undefined,
+    },
+  })
+
+  const emails = leads.map((l) => l.email).filter((e): e is string => !!e)
+  const urls = leads.map((l) => l.linkedinUrl).filter((u): u is string => !!u)
+
+  // One lookup for the whole file instead of a query per row.
+  const existing =
+    emails.length || urls.length
+      ? await prisma.lead.findMany({
+          where: {
+            OR: [
+              ...(emails.length ? [{ email: { in: emails } }] : []),
+              ...(urls.length ? [{ linkedinUrl: { in: urls } }] : []),
+            ],
+            // Legacy rows predate workspace scoping; treat them as ours.
+            AND: [{ OR: [{ workspaceId }, { workspaceId: null }] }],
+          },
+          select: { id: true, email: true, linkedinUrl: true },
+        })
+      : []
+
+  const existingByKey = new Map<string, string>()
+  for (const lead of existing) {
+    const key = dedupeKey({ email: lead.email, linkedinUrl: lead.linkedinUrl })
+    if (key) existingByKey.set(key, lead.id)
+  }
+
+  const result: ImportResult = {
+    imported: 0,
+    updated: 0,
+    skipped: 0,
+    failed: 0,
+    errors: [...parseErrors],
+    batchId: batch.id,
+  }
+
+  const toCreate: Prisma.LeadCreateManyInput[] = []
 
   for (let i = 0; i < leads.length; i++) {
     const lead = leads[i]
-    const row = i + 2
+    const key = dedupeKey({ email: lead.email, linkedinUrl: lead.linkedinUrl })
+    const existingId = key ? existingByKey.get(key) : undefined
 
-    try {
-      const where: Record<string, string> = {}
-      if (lead.email) where.email = lead.email
-      if (lead.linkedinUrl) where.linkedinUrl = lead.linkedinUrl
-
-      if (Object.keys(where).length === 0) {
-        failed++
-        errors.push({ row, message: "No unique identifier (email or linkedinUrl)" })
+    if (existingId) {
+      if (!updateExisting) {
+        result.skipped++
         continue
       }
-
-      const existing = await prisma.lead.findFirst({
-        where: { OR: [lead.email ? { email: lead.email } : {}, lead.linkedinUrl ? { linkedinUrl: lead.linkedinUrl } : {}].filter((c) => Object.keys(c).length > 0) },
-      })
-
-      if (existing) {
+      try {
         await prisma.lead.update({
-          where: { id: existing.id },
+          where: { id: existingId },
           data: {
-            firstName: lead.firstName,
-            lastName: lead.lastName,
-            email: lead.email,
-            linkedinUrl: lead.linkedinUrl,
-            company: lead.company,
-            jobTitle: lead.jobTitle,
-            campaignId,
+            ...pickDefined(lead),
+            workspaceId,
+            ...(campaignId ? { campaignId } : {}),
+            importBatchId: batch.id,
+            source,
           },
         })
-        updated++
-      } else {
-        await prisma.lead.create({
-          data: {
-            firstName: lead.firstName,
-            lastName: lead.lastName,
-            email: lead.email,
-            linkedinUrl: lead.linkedinUrl,
-            company: lead.company,
-            jobTitle: lead.jobTitle,
-            campaignId,
-          },
-        })
-        imported++
+        result.updated++
+      } catch {
+        result.failed++
+        result.errors.push({ row: i + 2, message: "Could not update the existing lead" })
       }
-    } catch {
-      failed++
-      errors.push({ row, message: "Database error importing lead" })
+      continue
+    }
+
+    toCreate.push({
+      workspaceId,
+      campaignId,
+      importBatchId: batch.id,
+      source,
+      firstName: lead.firstName,
+      lastName: lead.lastName,
+      email: lead.email,
+      linkedinUrl: lead.linkedinUrl,
+      company: lead.company,
+      jobTitle: lead.jobTitle,
+      phone: lead.phone,
+      location: lead.location,
+      industry: lead.industry,
+      customFields: (lead.customFields ?? undefined) as Prisma.InputJsonValue | undefined,
+    })
+  }
+
+  if (toCreate.length > 0) {
+    // createMany in chunks: one giant statement is what actually times out on
+    // a pooled Postgres connection.
+    for (let i = 0; i < toCreate.length; i += 500) {
+      const slice = toCreate.slice(i, i + 500)
+      try {
+        const created = await prisma.lead.createMany({ data: slice })
+        result.imported += created.count
+      } catch {
+        result.failed += slice.length
+        result.errors.push({ row: 0, message: `Failed to insert ${slice.length} leads` })
+      }
     }
   }
 
-  return { imported, updated, failed, errors }
+  if (campaignId) {
+    await prisma.campaign.update({
+      where: { id: campaignId },
+      data: { totalCount: { increment: result.imported } },
+    })
+  }
+
+  await prisma.importBatch.update({
+    where: { id: batch.id },
+    data: {
+      status: result.failed > 0 && result.imported === 0 ? "FAILED" : "COMPLETED",
+      imported: result.imported,
+      updated: result.updated,
+      skipped: result.skipped,
+      failed: result.failed,
+      errors: result.errors.slice(0, 200) as unknown as Prisma.InputJsonValue,
+      completedAt: new Date(),
+    },
+  })
+
+  return result
+}
+
+function pickDefined(lead: ParsedLead) {
+  const data: Record<string, unknown> = {}
+  for (const field of CORE_FIELDS) {
+    const value = lead[field]
+    if (value !== null && value !== undefined && value !== "") data[field] = value
+  }
+  return data
+}
+
+/**
+ * Back-compat helper for the original CSV-only path.
+ * New code should go through parseUpload() + applyMapping().
+ */
+export function parseLeadsCSV(csvContent: string): { valid: ParsedLead[]; errors: RowError[] } {
+  const table = parseDelimitedText(csvContent)
+  const mapping = detectMapping(table.columns)
+  const { valid, errors } = applyMapping(table.rows, mapping)
+  return { valid, errors }
 }

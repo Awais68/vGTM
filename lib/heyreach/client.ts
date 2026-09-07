@@ -3,6 +3,7 @@ import type {
   HeyReachLead,
   AddLeadsResult,
   CampaignMetrics,
+  HeyReachLinkedInAccount,
 } from "./types"
 
 const BASE_URL = "https://api.heyreach.io/api/public"
@@ -161,6 +162,26 @@ export class HeyReachClient {
       method: "POST",
       body: JSON.stringify({ leadId, message }),
     })
+  }
+
+  /**
+   * The LinkedIn sender accounts connected to the HeyReach workspace.
+   * We mirror these locally so an operator can rotate between senders here
+   * without us ever holding LinkedIn credentials ourselves.
+   */
+  async getLinkedInAccounts(offset = 0, limit = 100): Promise<HeyReachLinkedInAccount[]> {
+    const response = await this.request<{
+      items?: HeyReachLinkedInAccount[]
+      data?: HeyReachLinkedInAccount[] | { items?: HeyReachLinkedInAccount[] }
+    }>("/linkedinaccount/GetAll", {
+      method: "POST",
+      body: JSON.stringify({ offset, limit }),
+    })
+
+    if (Array.isArray(response.items)) return response.items
+    if (Array.isArray(response.data)) return response.data
+    if (response.data && Array.isArray(response.data.items)) return response.data.items
+    return []
   }
 
   async getCampaignMetrics(

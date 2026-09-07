@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox"
 import { ArrowLeft, Plus, Trash2, Loader2 } from "lucide-react"
 import { LeadImporter } from "@/components/leads/LeadImporter"
+import { CampaignSenderPicker } from "@/components/linkedin/campaign-sender-picker"
 
 interface CreateCampaignProps {
   onBack: () => void
@@ -36,7 +37,6 @@ export function CreateCampaign({ onBack }: CreateCampaignProps) {
   const [campaignName, setCampaignName] = useState("First Campaign")
   const [campaignId, setCampaignId] = useState<string | null>(null)
   const [leadCount, setLeadCount] = useState(0)
-  const [selectedSender, setSelectedSender] = useState("john-doe")
   const [emailSteps, setEmailSteps] = useState<EmailStep[]>([newStep(1)])
   const [saving, setSaving] = useState(false)
   const [launching, setLaunching] = useState(false)
@@ -190,45 +190,15 @@ export function CreateCampaign({ onBack }: CreateCampaignProps) {
         return (
           <div className="space-y-6">
             <p className="text-gray-600">
-              Select multiple sending LinkedIn accounts that you want to use in this campaign (optional — skip if
-              this is an email-only campaign):
+              Choose the LinkedIn profiles this campaign sends from. Drafts rotate across whichever
+              senders still have headroom. Leave everything unchecked to use any active sender.
             </p>
 
-            <div className="bg-white border rounded-lg">
-              <div className="grid grid-cols-5 gap-4 p-4 border-b bg-gray-50 text-sm font-medium">
-                <div>Name</div>
-                <div>LinkedIn Subscription</div>
-                <div>Activity</div>
-                <div>Configure</div>
-                <div></div>
-              </div>
-
-              <div className="grid grid-cols-5 gap-4 p-4 items-center">
-                <div className="flex items-center gap-2">
-                  <Checkbox id="john-doe" checked={selectedSender === "john-doe"} />
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-gray-700 rounded-full flex items-center justify-center text-white text-sm">
-                      JD
-                    </div>
-                    <div>
-                      <div className="font-medium">John Doe</div>
-                      <div className="text-sm text-gray-500">up to 40 connections/day</div>
-                    </div>
-                  </div>
-                </div>
-                <div>Free Account</div>
-                <div>In 0 campaigns.</div>
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm">
-                    ⚙️
-                  </Button>
-                  <Button variant="outline" size="sm">
-                    ⏰
-                  </Button>
-                </div>
-                <div></div>
-              </div>
-            </div>
+            {campaignId ? (
+              <CampaignSenderPicker campaignId={campaignId} />
+            ) : (
+              <p className="text-sm text-gray-500">Create the campaign first, then pick its senders.</p>
+            )}
           </div>
         )
 

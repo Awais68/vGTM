@@ -10,6 +10,9 @@ export const generateQueueSchema = z.object({
   tone: z.enum(["FRIENDLY_DIRECT", "FORMAL", "CASUAL", "CONSULTATIVE", "BLUNT"]).optional(),
   senderName: z.string().optional(),
   offerContext: z.string().optional(),
+  assignSender: z.boolean().optional(),
+  linkedInAccountId: z.string().min(1).nullable().optional(),
+  ignoreSchedule: z.boolean().optional(),
 })
 
 export const updateQueueItemSchema = z.object({
@@ -43,4 +46,7 @@ export const settingsSchema = z.object({
     .optional(),
   dailyConnectionLimit: z.number().int().min(1).max(100).optional(),
   dailyMessageLimit: z.number().int().min(1).max(200).optional(),
+  autopilotEnabled: z.boolean().optional(),
+  autopilotQueueTarget: z.number().int().min(1).max(200).optional(),
+  timezone: z.string().max(64).optional(),
 })

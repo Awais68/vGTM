@@ -20,6 +20,9 @@ export async function GET() {
       dailyMessageLimit: true,
       aiProvider: true,
       aiModel: true,
+      autopilotEnabled: true,
+      autopilotQueueTarget: true,
+      timezone: true,
     },
   })
 

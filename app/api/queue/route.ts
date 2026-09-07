@@ -12,11 +12,17 @@ export async function GET(request: NextRequest) {
   const status = params.get("status")
   const channel = params.get("channel")
   const campaignId = params.get("campaignId")
+  const linkedInAccountId = params.get("linkedInAccountId")
   const take = Math.min(Number(params.get("limit") ?? 50), 200)
 
   const where: Prisma.SendQueueItemWhereInput = {
     workspaceId: ctx.workspaceId,
     ...(campaignId ? { campaignId } : {}),
+    // Unassigned drafts stay visible to whoever is switched in — otherwise
+    // items created before senders existed would be stranded.
+    ...(linkedInAccountId
+      ? { OR: [{ linkedInAccountId }, { linkedInAccountId: null }] }
+      : {}),
     ...(channel ? { channel: channel as Prisma.EnumQueueChannelFilter["equals"] } : {}),
     status: status
       ? (status as "DRAFT" | "READY" | "SENT" | "SKIPPED")
@@ -42,6 +48,7 @@ export async function GET(request: NextRequest) {
           },
         },
         campaign: { select: { id: true, name: true } },
+        linkedInAccount: { select: { id: true, name: true } },
       },
     }),
     getDailyUsage(ctx.workspaceId),

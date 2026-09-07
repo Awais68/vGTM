@@ -2,570 +2,615 @@
 
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Slider } from "@/components/ui/slider"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Switch } from "@/components/ui/switch"
+import { Progress } from "@/components/ui/progress"
 import {
-  Search,
-  Plus,
-  Settings,
-  MoreHorizontal,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
+import {
+  AlertTriangle,
+  CheckCircle2,
   Clock,
-  Unplug,
+  Linkedin,
+  Loader2,
+  Plus,
   RefreshCw,
-  Shield,
-  Wifi,
-  LogIn,
-  UserPlus,
+  Settings2,
+  ShieldCheck,
+  Star,
+  Trash2,
 } from "lucide-react"
+import { useSenderAccounts, type SenderAccount } from "@/components/linkedin/sender-context"
 
-interface LinkedInAccount {
-  id: string
-  name: string
-  status: "Available" | "Busy" | "Disconnected"
-  sendingLimits: {
-    follows: number
-    messages: number
-    profileViews: number
-  }
-  subscription: "Free Account" | "Premium" | "Sales Navigator"
-  campaignCount: number
-  email: string
-  isSelected?: boolean
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+
+interface WorkingHourSlot {
+  day: number
+  enabled: boolean
+  startHour: number
+  endHour: number
+}
+
+const DEFAULT_HOURS: WorkingHourSlot[] = [0, 1, 2, 3, 4, 5, 6].map((day) => ({
+  day,
+  enabled: day >= 1 && day <= 5,
+  startHour: 9,
+  endHour: 17,
+}))
+
+function readWorkingHours(value: unknown): WorkingHourSlot[] {
+  if (!Array.isArray(value) || value.length !== 7) return DEFAULT_HOURS
+  return value as WorkingHourSlot[]
+}
+
+const STATUS_STYLES: Record<SenderAccount["status"], string> = {
+  ACTIVE: "bg-green-100 text-green-800",
+  PAUSED: "bg-amber-100 text-amber-800",
+  DISCONNECTED: "bg-gray-100 text-gray-700",
+  NEEDS_ATTENTION: "bg-red-100 text-red-800",
+}
+
+const PLAN_LABELS: Record<SenderAccount["subscription"], string> = {
+  FREE: "Free",
+  PREMIUM: "Premium",
+  SALES_NAVIGATOR: "Sales Navigator",
+  RECRUITER: "Recruiter",
 }
 
 export function LinkedInAccounts() {
-  const [searchQuery, setSearchQuery] = useState("")
-  const [showScheduleModal, setShowScheduleModal] = useState(false)
-  const [showLimitsModal, setShowLimitsModal] = useState(false)
-  const [showAuthModal, setShowAuthModal] = useState(false)
-  const [selectedAccount, setSelectedAccount] = useState<LinkedInAccount | null>(null)
-  const [selectedAccounts, setSelectedAccounts] = useState<string[]>([])
-  const [authForm, setAuthForm] = useState({ email: "", password: "" })
+  const { accounts, activeAccountId, setActiveAccountId, loading, error, refresh } = useSenderAccounts()
+  const [syncing, setSyncing] = useState(false)
+  const [syncMessage, setSyncMessage] = useState<string | null>(null)
+  const [addOpen, setAddOpen] = useState(false)
+  const [editing, setEditing] = useState<SenderAccount | null>(null)
 
-  const [accounts, setAccounts] = useState<LinkedInAccount[]>([
-    {
-      id: "1",
-      name: "John Doe",
-      status: "Available",
-      sendingLimits: { follows: 25, messages: 40, profileViews: 60 },
-      subscription: "Free Account",
-      campaignCount: 0,
-      email: "john.doe@example.com",
-    },
-    {
-      id: "2",
-      name: "Sarah Wilson",
-      status: "Available",
-      sendingLimits: { follows: 40, messages: 60, profileViews: 80 },
-      subscription: "Premium",
-      campaignCount: 2,
-      email: "sarah.wilson@example.com",
-    },
-    {
-      id: "3",
-      name: "Mike Johnson",
-      status: "Busy",
-      sendingLimits: { follows: 60, messages: 80, profileViews: 100 },
-      subscription: "Sales Navigator",
-      campaignCount: 5,
-      email: "mike.johnson@example.com",
-    },
-    {
-      id: "4",
-      name: "Emily Chen",
-      status: "Available",
-      sendingLimits: { follows: 30, messages: 50, profileViews: 70 },
-      subscription: "Premium",
-      campaignCount: 1,
-      email: "emily.chen@example.com",
-    },
-    {
-      id: "5",
-      name: "David Brown",
-      status: "Disconnected",
-      sendingLimits: { follows: 20, messages: 30, profileViews: 40 },
-      subscription: "Free Account",
-      campaignCount: 0,
-      email: "david.brown@example.com",
-    },
-  ])
-
-  const [senderLimits, setSenderLimits] = useState({
-    maxFollows: [40],
-    maxMessages: [40],
-    maxInMailMessages: [40],
-    maxConnectionRequests: [25],
-    maxProfileViews: [40],
-    maxPostLikes: [40],
-  })
-
-  const [weeklySchedule, setWeeklySchedule] = useState({
-    monday: { enabled: true, start: 0, end: 24 },
-    tuesday: { enabled: true, start: 0, end: 24 },
-    wednesday: { enabled: true, start: 0, end: 24 },
-    thursday: { enabled: true, start: 0, end: 24 },
-    friday: { enabled: true, start: 0, end: 24 },
-    saturday: { enabled: true, start: 0, end: 24 },
-    sunday: { enabled: true, start: 0, end: 24 },
-  })
-
-  const filteredAccounts = accounts.filter((account) => account.name.toLowerCase().includes(searchQuery.toLowerCase()))
-
-  const handleSelectAccount = (accountId: string, checked: boolean) => {
-    if (checked) {
-      setSelectedAccounts([...selectedAccounts, accountId])
-    } else {
-      setSelectedAccounts(selectedAccounts.filter((id) => id !== accountId))
+  const syncFromHeyReach = async () => {
+    setSyncing(true)
+    setSyncMessage(null)
+    try {
+      const response = await fetch("/api/linkedin-accounts/sync", { method: "POST" })
+      const json = await response.json()
+      if (!response.ok || !json.success) {
+        setSyncMessage(json.error ?? "Sync failed")
+        return
+      }
+      setSyncMessage(
+        `Synced ${json.data.total} HeyReach sender(s): ${json.data.created} added, ${json.data.updated} updated.`
+      )
+      await refresh()
+    } catch {
+      setSyncMessage("Network error during sync")
+    } finally {
+      setSyncing(false)
     }
   }
 
-  const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedAccounts(filteredAccounts.map((account) => account.id))
-    } else {
-      setSelectedAccounts([])
-    }
+  const makeDefault = async (account: SenderAccount) => {
+    await fetch(`/api/linkedin-accounts/${account.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ isDefault: true }),
+    })
+    await refresh()
   }
 
-  const handleAuthentication = () => {
-    console.log("[v0] Authenticating with:", authForm)
-    const newAccount: LinkedInAccount = {
-      id: Date.now().toString(),
-      name: authForm.email
-        .split("@")[0]
-        .replace(".", " ")
-        .replace(/\b\w/g, (l) => l.toUpperCase()),
-      status: "Available",
-      sendingLimits: { follows: 25, messages: 40, profileViews: 60 },
-      subscription: "Free Account",
-      campaignCount: 0,
-      email: authForm.email,
-    }
-    setAccounts([...accounts, newAccount])
-    setAuthForm({ email: "", password: "" })
-    setShowAuthModal(false)
+  const toggleStatus = async (account: SenderAccount) => {
+    await fetch(`/api/linkedin-accounts/${account.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: account.status === "ACTIVE" ? "PAUSED" : "ACTIVE" }),
+    })
+    await refresh()
   }
 
-  const openScheduleModal = (account: LinkedInAccount) => {
-    setSelectedAccount(account)
-    setShowScheduleModal(true)
-  }
-
-  const openLimitsModal = (account: LinkedInAccount) => {
-    setSelectedAccount(account)
-    setShowLimitsModal(true)
-  }
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "Available":
-        return "bg-green-100 text-green-800"
-      case "Busy":
-        return "bg-yellow-100 text-yellow-800"
-      case "Disconnected":
-        return "bg-red-100 text-red-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
-  }
-
-  const formatTime = (hour: number) => {
-    if (hour === 0) return "12 AM"
-    if (hour === 12) return "12 PM"
-    if (hour < 12) return `${hour} AM`
-    return `${hour - 12} PM`
+  const removeAccount = async (account: SenderAccount) => {
+    await fetch(`/api/linkedin-accounts/${account.id}`, { method: "DELETE" })
+    if (activeAccountId === account.id) setActiveAccountId(null)
+    await refresh()
   }
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold">LinkedIn Accounts</h1>
+    <div className="space-y-6 p-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-semibold">LinkedIn accounts</h1>
+          <p className="mt-1 text-sm text-gray-500">
+            Sender identities used to rotate outreach. Switch the active sender from the header.
+          </p>
+        </div>
         <div className="flex gap-2">
-          <Button variant="outline" onClick={() => setShowAuthModal(true)}>
-            <LogIn className="w-4 h-4 mr-2" />
-            Add Account
+          <Button variant="outline" onClick={syncFromHeyReach} disabled={syncing}>
+            {syncing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+            Sync from HeyReach
           </Button>
-          <Button className="bg-cyan-500 hover:bg-cyan-600">
-            <Plus className="w-4 h-4 mr-2" />
-            Connect account
-          </Button>
-        </div>
-      </div>
-
-      <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-4 mb-6">
-        <div className="flex items-start gap-3">
-          <div className="w-6 h-6 bg-cyan-500 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5">
-            <span className="text-white text-sm">i</span>
-          </div>
-          <div className="text-sm text-cyan-700">
-            <span className="font-medium">The LinkedIn accounts are called senders</span> when put in a campaign.{" "}
-            <span className="font-medium">Connect multiple LinkedIn sending accounts on one campaign</span> to increase
-            your daily sending volume.
-          </div>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-4">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
-            <Input
-              placeholder="Search senders"
-              className="pl-10 w-64"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
-          </div>
-
-          <Select defaultValue="all">
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">All</SelectItem>
-              <SelectItem value="available">Available</SelectItem>
-              <SelectItem value="busy">Busy</SelectItem>
-              <SelectItem value="disconnected">Disconnected</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {selectedAccounts.length > 0 && (
-            <span className="text-sm text-cyan-600 font-medium">
-              {selectedAccounts.length} account{selectedAccounts.length > 1 ? "s" : ""} selected
-            </span>
-          )}
-          <span className="text-sm text-green-600 font-medium">Unlimited seats available</span>
-          <Button variant="outline">
-            <Plus className="w-4 h-4 mr-2" />
-            Purchase seats
+          <Button className="bg-cyan-500 hover:bg-cyan-600" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-2 h-4 w-4" />
+            Add sender
           </Button>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg border">
-        <div className="grid grid-cols-6 gap-4 p-4 border-b bg-gray-50 text-sm font-medium text-gray-600">
-          <div className="flex items-center gap-2">
-            <Checkbox
-              checked={selectedAccounts.length === filteredAccounts.length && filteredAccounts.length > 0}
-              onCheckedChange={handleSelectAll}
-            />
-            LinkedIn Account
-          </div>
-          <div>Status</div>
-          <div>Subscription</div>
-          <div>Sending limits</div>
-          <div></div>
-          <div></div>
-        </div>
-
-        {filteredAccounts.map((account) => (
-          <div key={account.id} className="grid grid-cols-6 gap-4 p-4 border-b items-center">
-            <div className="flex items-center gap-3">
-              <Checkbox
-                checked={selectedAccounts.includes(account.id)}
-                onCheckedChange={(checked) => handleSelectAccount(account.id, checked as boolean)}
-              />
-              <Avatar className="w-10 h-10">
-                <AvatarFallback className="bg-gray-700 text-white">
-                  {account.name
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("")}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <div className="font-medium">{account.name}</div>
-                <div className="text-xs text-gray-500">{account.email}</div>
-              </div>
-            </div>
-
-            <div>
-              <Badge className={getStatusColor(account.status)}>✓ {account.status}</Badge>
-            </div>
-
-            <div>
-              <span className="text-sm text-gray-600">{account.subscription}</span>
-              <div className="text-xs text-gray-400">In {account.campaignCount} campaigns</div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <Badge variant="outline" className="bg-blue-50 border-blue-200 text-blue-700">
-                📊 {account.sendingLimits.follows}/day
-              </Badge>
-              <Badge variant="outline" className="bg-green-50 border-green-200 text-green-700">
-                📧 {account.sendingLimits.messages}/day
-              </Badge>
-              <Badge variant="outline" className="bg-purple-50 border-purple-200 text-purple-700">
-                👁️ {account.sendingLimits.profileViews}/day
-              </Badge>
-            </div>
-
-            <div>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openLimitsModal(account)}
-                className="text-gray-600 border-gray-300"
-              >
-                <Settings className="w-4 h-4 mr-1" />
-                Configure limits
-              </Button>
-            </div>
-
-            <div className="flex items-center justify-end gap-2">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="sm">
-                    <MoreHorizontal className="w-4 h-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuItem className="text-red-600">
-                    <Unplug className="w-4 h-4 mr-2" />
-                    Disconnect
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Re-sync
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openLimitsModal(account)}>
-                    <Settings className="w-4 h-4 mr-2" />
-                    Configure sending limits
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => openScheduleModal(account)}>
-                    <Clock className="w-4 h-4 mr-2" />
-                    Configure working hours
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <Wifi className="w-4 h-4 mr-2" />
-                    Configure proxy
-                  </DropdownMenuItem>
-                  <DropdownMenuItem>
-                    <Shield className="w-4 h-4 mr-2" />
-                    Inbox privacy configuration
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
-          </div>
-        ))}
-
-        <div className="p-4 text-sm text-gray-600">
-          Showing {filteredAccounts.length} of {accounts.length}
+      <div className="flex items-start gap-3 rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+        <ShieldCheck className="mt-0.5 h-5 w-5 flex-shrink-0" />
+        <div>
+          <p className="font-medium">No LinkedIn passwords are stored here.</p>
+          <p className="mt-1 text-blue-800">
+            Handing LinkedIn credentials to a third-party tool violates their terms and is the fastest
+            route to a permanent ban. These records are sender identities only: limits, schedules and
+            warm-up. Messages are either sent by you from LinkedIn itself, or by HeyReach under its own
+            connection.
+          </p>
         </div>
       </div>
 
-      <Dialog open={showAuthModal} onOpenChange={setShowAuthModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="w-5 h-5" />
-              Add LinkedIn Account
-            </DialogTitle>
-          </DialogHeader>
+      {syncMessage && (
+        <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 text-sm text-gray-700">{syncMessage}</div>
+      )}
 
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Email Address</label>
-              <Input
-                type="email"
-                placeholder="Enter your LinkedIn email"
-                value={authForm.email}
-                onChange={(e) => setAuthForm({ ...authForm, email: e.target.value })}
-              />
-            </div>
+      {error && (
+        <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <AlertTriangle className="h-4 w-4" />
+          {error}
+        </div>
+      )}
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Password</label>
-              <Input
-                type="password"
-                placeholder="Enter your LinkedIn password"
-                value={authForm.password}
-                onChange={(e) => setAuthForm({ ...authForm, password: e.target.value })}
-              />
-            </div>
+      {loading ? (
+        <div className="flex items-center gap-2 p-8 text-gray-500">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading accounts…
+        </div>
+      ) : accounts.length === 0 ? (
+        <Card>
+          <CardContent className="p-12 text-center">
+            <Linkedin className="mx-auto mb-4 h-10 w-10 text-gray-300" />
+            <p className="font-medium">No sender accounts yet</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-gray-500">
+              Add the profile you send from, or pull the profiles already connected to HeyReach.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {accounts.map((account) => (
+            <Card key={account.id} className={account.id === activeAccountId ? "border-cyan-400 shadow-sm" : ""}>
+              <CardHeader className="pb-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-3">
+                    <Avatar className="h-10 w-10">
+                      {account.avatarUrl ? <AvatarImage src={account.avatarUrl} alt={account.name} /> : null}
+                      <AvatarFallback className="bg-cyan-100 text-cyan-700">
+                        {account.name.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="min-w-0">
+                      <CardTitle className="flex items-center gap-2 truncate text-base">
+                        {account.name}
+                        {account.isDefault && <Star className="h-3.5 w-3.5 fill-amber-400 text-amber-400" />}
+                      </CardTitle>
+                      <p className="truncate text-xs text-gray-500">{account.email ?? account.profileUrl ?? "—"}</p>
+                    </div>
+                  </div>
+                  <Badge className={STATUS_STYLES[account.status]}>{account.status.replace("_", " ")}</Badge>
+                </div>
+              </CardHeader>
 
-            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-              <p className="text-sm text-yellow-700">
-                <strong>Note:</strong> Your credentials are encrypted and stored securely. We use them only to manage
-                your LinkedIn outreach campaigns.
-              </p>
-            </div>
-
-            <div className="flex gap-2 justify-end">
-              <Button variant="outline" onClick={() => setShowAuthModal(false)}>
-                Cancel
-              </Button>
-              <Button
-                onClick={handleAuthentication}
-                className="bg-cyan-500 hover:bg-cyan-600"
-                disabled={!authForm.email || !authForm.password}
-              >
-                Add Account
-              </Button>
-            </div>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={showScheduleModal} onOpenChange={setShowScheduleModal}>
-        <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle>Setup sender schedule</DialogTitle>
-              <div className="flex items-center gap-2">
-                <Button variant="outline" size="sm">
-                  Go to sender limits
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => setShowScheduleModal(false)}>
-                  ✕
-                </Button>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            {Object.entries(weeklySchedule).map(([day, schedule]) => (
-              <div key={day} className="space-y-3">
-                <div className="flex items-center gap-3">
-                  <input
-                    type="checkbox"
-                    checked={schedule.enabled}
-                    onChange={(e) =>
-                      setWeeklySchedule((prev) => ({
-                        ...prev,
-                        [day]: { ...prev[day as keyof typeof prev], enabled: e.target.checked },
-                      }))
-                    }
-                    className="w-4 h-4 text-cyan-600"
-                  />
-                  <span className="font-medium capitalize w-24">{day} Schedule</span>
+              <CardContent className="space-y-4">
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="outline">{PLAN_LABELS[account.subscription]}</Badge>
+                  <Badge variant="outline">{account.provider === "HEYREACH" ? "HeyReach" : "Manual"}</Badge>
+                  <Badge variant="outline">{account.campaignCount} campaign(s)</Badge>
+                  <Badge variant="outline" className={account.withinWorkingHours ? "text-green-700" : "text-gray-500"}>
+                    <Clock className="mr-1 h-3 w-3" />
+                    {account.withinWorkingHours ? "In hours" : "Outside hours"}
+                  </Badge>
                 </div>
 
-                {schedule.enabled && (
-                  <div className="ml-7">
-                    <div className="flex items-center gap-4 mb-2">
-                      <span className="text-sm text-gray-600">0 AM</span>
-                      <span className="text-sm text-gray-600">6 AM</span>
-                      <span className="text-sm text-gray-600">12 PM</span>
-                      <span className="text-sm text-gray-600">6 PM</span>
-                      <span className="text-sm text-gray-600">12 AM</span>
+                <UsageBar
+                  label="Connections today"
+                  usage={account.usage.connection}
+                />
+                <UsageBar label="Messages today" usage={account.usage.message} />
+
+                {account.warmupEnabled && account.warmupProgress < 100 && (
+                  <div>
+                    <div className="mb-1 flex justify-between text-xs text-gray-500">
+                      <span>Warm-up ramp</span>
+                      <span>{account.warmupProgress}% of full limits</span>
                     </div>
-                    <div className="relative h-8 bg-gray-200 rounded-full">
-                      <div
-                        className="absolute h-full bg-cyan-500 rounded-full"
-                        style={{
-                          left: `${(schedule.start / 24) * 100}%`,
-                          width: `${((schedule.end - schedule.start) / 24) * 100}%`,
-                        }}
-                      />
-                      <div className="absolute inset-0 flex items-center justify-between px-2">
-                        {[0, 6, 12, 18, 24].map((hour) => (
-                          <div key={hour} className="w-px h-4 bg-white/50" />
-                        ))}
-                      </div>
-                    </div>
+                    <Progress value={account.warmupProgress} className="h-1.5" />
                   </div>
                 )}
-              </div>
-            ))}
+
+                {account.lastError && (
+                  <p className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">{account.lastError}</p>
+                )}
+
+                <div className="flex flex-wrap gap-2 border-t pt-3">
+                  <Button
+                    size="sm"
+                    variant={account.id === activeAccountId ? "default" : "outline"}
+                    className={account.id === activeAccountId ? "bg-cyan-500 hover:bg-cyan-600" : ""}
+                    onClick={() => setActiveAccountId(account.id)}
+                  >
+                    {account.id === activeAccountId ? (
+                      <>
+                        <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                        Active sender
+                      </>
+                    ) : (
+                      "Switch to this"
+                    )}
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => setEditing(account)}>
+                    <Settings2 className="mr-1.5 h-3.5 w-3.5" />
+                    Limits &amp; hours
+                  </Button>
+                  <Button size="sm" variant="outline" onClick={() => toggleStatus(account)}>
+                    {account.status === "ACTIVE" ? "Pause" : "Resume"}
+                  </Button>
+                  {!account.isDefault && (
+                    <Button size="sm" variant="outline" onClick={() => makeDefault(account)}>
+                      Make default
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-red-600 hover:bg-red-50 hover:text-red-700"
+                    onClick={() => removeAccount(account)}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      <AddSenderDialog open={addOpen} onOpenChange={setAddOpen} onCreated={refresh} />
+      <EditSenderDialog account={editing} onClose={() => setEditing(null)} onSaved={refresh} />
+    </div>
+  )
+}
+
+function UsageBar({ label, usage }: { label: string; usage: { sentToday: number; limit: number; pending: number } }) {
+  const percent = usage.limit > 0 ? Math.min(100, Math.round((usage.sentToday / usage.limit) * 100)) : 0
+  return (
+    <div>
+      <div className="mb-1 flex justify-between text-xs">
+        <span className="text-gray-600">{label}</span>
+        <span className="text-gray-500">
+          {usage.sentToday}/{usage.limit}
+          {usage.pending > 0 ? ` · ${usage.pending} queued` : ""}
+        </span>
+      </div>
+      <Progress value={percent} className="h-1.5" />
+    </div>
+  )
+}
+
+function AddSenderDialog({
+  open,
+  onOpenChange,
+  onCreated,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onCreated: () => Promise<void>
+}) {
+  const [name, setName] = useState("")
+  const [email, setEmail] = useState("")
+  const [profileUrl, setProfileUrl] = useState("")
+  const [subscription, setSubscription] = useState<SenderAccount["subscription"]>("FREE")
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await fetch("/api/linkedin-accounts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          email: email.trim() || null,
+          profileUrl: profileUrl.trim() || null,
+          subscription,
+        }),
+      })
+      const json = await response.json()
+      if (!response.ok || !json.success) {
+        setError(json.error ?? "Could not add this sender")
+        return
+      }
+      setName("")
+      setEmail("")
+      setProfileUrl("")
+      await onCreated()
+      onOpenChange(false)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Add a sender</DialogTitle>
+          <DialogDescription>
+            Identify the LinkedIn profile you send from. No password is asked for and none is stored.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-3">
+          <div>
+            <Label htmlFor="sender-name">Name</Label>
+            <Input id="sender-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Ayesha Khan" />
+          </div>
+          <div>
+            <Label htmlFor="sender-email">Email (optional)</Label>
+            <Input
+              id="sender-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="ayesha@company.com"
+            />
+          </div>
+          <div>
+            <Label htmlFor="sender-profile">LinkedIn profile URL (optional)</Label>
+            <Input
+              id="sender-profile"
+              value={profileUrl}
+              onChange={(e) => setProfileUrl(e.target.value)}
+              placeholder="https://www.linkedin.com/in/ayesha"
+            />
+          </div>
+          <div>
+            <Label>Plan</Label>
+            <Select value={subscription} onValueChange={(v) => setSubscription(v as SenderAccount["subscription"])}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {Object.entries(PLAN_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!name.trim() || saving} className="bg-cyan-500 hover:bg-cyan-600">
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Add sender
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function EditSenderDialog({
+  account,
+  onClose,
+  onSaved,
+}: {
+  account: SenderAccount | null
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [form, setForm] = useState<{
+    dailyConnectionLimit: number
+    dailyMessageLimit: number
+    warmupEnabled: boolean
+    warmupDays: number
+    timezone: string
+    workingHours: WorkingHourSlot[]
+  } | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // Load the account into local state the first time this dialog sees it.
+  const current = account
+  if (current && !form) {
+    setForm({
+      dailyConnectionLimit: current.dailyConnectionLimit,
+      dailyMessageLimit: current.dailyMessageLimit,
+      warmupEnabled: current.warmupEnabled,
+      warmupDays: current.warmupDays,
+      timezone: current.timezone,
+      workingHours: readWorkingHours(current.workingHours),
+    })
+  }
+
+  const close = () => {
+    setForm(null)
+    setError(null)
+    onClose()
+  }
+
+  const save = async () => {
+    if (!current || !form) return
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await fetch(`/api/linkedin-accounts/${current.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(form),
+      })
+      const json = await response.json()
+      if (!response.ok || !json.success) {
+        setError(json.error ?? "Could not save")
+        return
+      }
+      await onSaved()
+      close()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!current || !form) return null
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && close()}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{current.name} — limits &amp; hours</DialogTitle>
+          <DialogDescription>
+            Daily caps are enforced per sender, so one profile can never eat another&apos;s headroom.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>Connections / day</Label>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={form.dailyConnectionLimit}
+                onChange={(e) => setForm({ ...form, dailyConnectionLimit: Number(e.target.value) })}
+              />
+            </div>
+            <div>
+              <Label>Messages / day</Label>
+              <Input
+                type="number"
+                min={1}
+                max={200}
+                value={form.dailyMessageLimit}
+                onChange={(e) => setForm({ ...form, dailyMessageLimit: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-gray-500">
+            LinkedIn tolerates roughly 20 connection requests a day on a free account. Going higher is
+            what gets profiles restricted — raise these only for an aged, warmed-up account.
+          </p>
+
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div>
+              <p className="text-sm font-medium">Warm-up ramp</p>
+              <p className="text-xs text-gray-500">Start at 30% of the limits and build up over time.</p>
+            </div>
+            <Switch
+              checked={form.warmupEnabled}
+              onCheckedChange={(checked) => setForm({ ...form, warmupEnabled: checked })}
+            />
           </div>
 
-          <div className="flex justify-end">
-            <Button onClick={() => setShowScheduleModal(false)} className="bg-cyan-500 hover:bg-cyan-600">
-              Save settings
-            </Button>
+          {form.warmupEnabled && (
+            <div>
+              <Label>Ramp length (days)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={60}
+                value={form.warmupDays}
+                onChange={(e) => setForm({ ...form, warmupDays: Number(e.target.value) })}
+              />
+            </div>
+          )}
+
+          <div>
+            <Label>Timezone</Label>
+            <Input
+              value={form.timezone}
+              onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+              placeholder="Asia/Karachi"
+            />
           </div>
-        </DialogContent>
-      </Dialog>
 
-      <Dialog open={showLimitsModal} onOpenChange={setShowLimitsModal}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <div className="flex items-center justify-between">
-              <DialogTitle>Setup sender limits</DialogTitle>
-              <Button variant="ghost" size="sm" onClick={() => setShowLimitsModal(false)}>
-                ✕
-              </Button>
-            </div>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            <div className="flex items-center gap-3 mb-4">
-              <Avatar className="w-10 h-10">
-                <AvatarFallback className="bg-gray-700 text-white">
-                  {selectedAccount?.name
-                    .split(" ")
-                    .map((n) => n[0])
-                    .join("") || "JD"}
-                </AvatarFallback>
-              </Avatar>
-              <div>
-                <div className="font-medium">{selectedAccount?.name || "John Doe"}</div>
-                <Button variant="outline" size="sm" className="mt-1 bg-transparent">
-                  Go to sender schedule
-                </Button>
-              </div>
-            </div>
-
-            <div className="bg-cyan-50 border border-cyan-200 rounded-lg p-3">
-              <p className="text-sm text-cyan-700">
-                <strong>Note:</strong> The numbers below may vary based on your account's health and activities on other
-                campaigns. We do this to keep your accounts safe.
-              </p>
-            </div>
-
-            <div className="space-y-6">
-              {[
-                { key: "maxFollows", label: "Max Follows/day", value: senderLimits.maxFollows },
-                { key: "maxMessages", label: "Max Messages/day", value: senderLimits.maxMessages },
-                { key: "maxInMailMessages", label: "Max InMail Messages/day", value: senderLimits.maxInMailMessages },
-                {
-                  key: "maxConnectionRequests",
-                  label: "Max Connection Requests/day",
-                  value: senderLimits.maxConnectionRequests,
-                },
-                { key: "maxProfileViews", label: "Max Profile Views/day", value: senderLimits.maxProfileViews },
-                { key: "maxPostLikes", label: "Max Post Likes/day", value: senderLimits.maxPostLikes },
-              ].map((limit) => (
-                <div key={limit.key} className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-sm font-medium">{limit.label}</label>
-                    <span className="text-sm font-medium">{limit.value[0]}</span>
-                  </div>
-                  <Slider
-                    value={limit.value}
-                    onValueChange={(value) =>
-                      setSenderLimits((prev) => ({
-                        ...prev,
-                        [limit.key]: value,
-                      }))
-                    }
-                    max={100}
+          <div>
+            <Label className="mb-2 block">Working hours</Label>
+            <div className="space-y-2">
+              {form.workingHours.map((slot, index) => (
+                <div key={slot.day} className="flex items-center gap-2">
+                  <Switch
+                    checked={slot.enabled}
+                    onCheckedChange={(checked) => {
+                      const next = [...form.workingHours]
+                      next[index] = { ...slot, enabled: checked }
+                      setForm({ ...form, workingHours: next })
+                    }}
+                  />
+                  <span className="w-10 text-sm">{DAY_NAMES[slot.day]}</span>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={23}
+                    className="w-20"
+                    value={slot.startHour}
+                    disabled={!slot.enabled}
+                    onChange={(e) => {
+                      const next = [...form.workingHours]
+                      next[index] = { ...slot, startHour: Number(e.target.value) }
+                      setForm({ ...form, workingHours: next })
+                    }}
+                  />
+                  <span className="text-sm text-gray-400">to</span>
+                  <Input
+                    type="number"
                     min={1}
-                    step={1}
-                    className="w-full"
+                    max={24}
+                    className="w-20"
+                    value={slot.endHour}
+                    disabled={!slot.enabled}
+                    onChange={(e) => {
+                      const next = [...form.workingHours]
+                      next[index] = { ...slot, endHour: Number(e.target.value) }
+                      setForm({ ...form, workingHours: next })
+                    }}
                   />
                 </div>
               ))}
             </div>
           </div>
 
-          <div className="flex justify-end">
-            <Button onClick={() => setShowLimitsModal(false)} className="bg-cyan-500 hover:bg-cyan-600">
-              Save settings
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={close}>
+            Cancel
+          </Button>
+          <Button onClick={save} disabled={saving} className="bg-cyan-500 hover:bg-cyan-600">
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

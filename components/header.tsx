@@ -2,10 +2,10 @@
 
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Info } from "lucide-react"
+import { SenderSwitcher } from "@/components/linkedin/sender-switcher"
 
-export function Header() {
+export function Header({ onManageSenders }: { onManageSenders?: () => void }) {
   return (
     <header className="h-16 bg-cyan-500 flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
@@ -17,14 +17,7 @@ export function Header() {
       </div>
 
       <div className="flex items-center gap-4">
-        <Select defaultValue="peak-corporate">
-          <SelectTrigger className="w-48 bg-white/10 border-white/20 text-white">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="peak-corporate">Peak Corporate Solution</SelectItem>
-          </SelectContent>
-        </Select>
+        <SenderSwitcher onManage={onManageSenders} />
 
         <Button variant="ghost" size="sm" className="text-white hover:bg-cyan-600">
           <Info className="w-4 h-4" />

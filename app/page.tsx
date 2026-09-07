@@ -13,6 +13,9 @@ import { NeedsReview } from "@/components/outreach/NeedsReview"
 import { SendQueue } from "@/components/outreach/SendQueue"
 import { OverviewDashboard } from "@/components/analytics/OverviewDashboard"
 import { WorkspaceSettings } from "@/components/settings/WorkspaceSettings"
+import { AutomationCenter } from "@/components/automation/AutomationCenter"
+import { LeadImporter } from "@/components/leads/LeadImporter"
+import { SenderProvider } from "@/components/linkedin/sender-context"
 
 function Placeholder({ title }: { title: string }) {
   return (
@@ -61,6 +64,18 @@ export default function Home() {
         return <SendQueue />
       case "leads":
         return <LeadManagement />
+      case "import-leads":
+        return (
+          <div className="p-6">
+            <h1 className="mb-1 text-2xl font-semibold">Import leads</h1>
+            <p className="mb-6 text-sm text-gray-500">
+              CSV, Excel, JSON, PDF, Word or a pasted list — the columns are detected for you.
+            </p>
+            <LeadImporter />
+          </div>
+        )
+      case "automation":
+        return <AutomationCenter />
       case "needs-review":
         return <NeedsReview />
       case "linkedin-accounts":
@@ -84,12 +99,14 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen bg-gray-50">
-      <Sidebar activeView={activeView} onViewChange={setActiveView} />
-      <div className="flex-1 flex flex-col">
-        <Header />
-        <main className="flex-1 overflow-auto">{renderActiveView()}</main>
+    <SenderProvider>
+      <div className="flex h-screen bg-gray-50">
+        <Sidebar activeView={activeView} onViewChange={setActiveView} />
+        <div className="flex-1 flex flex-col">
+          <Header onManageSenders={() => setActiveView("linkedin-accounts")} />
+          <main className="flex-1 overflow-auto">{renderActiveView()}</main>
+        </div>
       </div>
-    </div>
+    </SenderProvider>
   )
 }

@@ -9,6 +9,7 @@ import {
   type Tone,
 } from "@/lib/ai/message-engine"
 import { checkDailyLimit } from "./limits"
+import { effectiveLimit, pickSenderAccount } from "@/lib/linkedin/accounts"
 
 export interface GenerateOptions {
   workspaceId: string
@@ -19,12 +20,20 @@ export interface GenerateOptions {
   tone?: Tone
   senderName?: string
   offerContext?: string
+  /** Rotate the drafts across the workspace's LinkedIn sender accounts. */
+  assignSender?: boolean
+  /** Pin the drafts to one sender (the account picked in the header). */
+  linkedInAccountId?: string | null
+  /** Generate outside a sender's working hours (manual runs from the UI). */
+  ignoreSchedule?: boolean
 }
 
 export interface GenerateResult {
   created: number
   skipped: number
   failures: { leadId: string; reason: string }[]
+  /** True when generation stopped early because every sender is at its cap. */
+  blockedByCapacity: boolean
 }
 
 /**
@@ -38,6 +47,9 @@ export async function generateQueue(options: GenerateOptions): Promise<GenerateR
     channel,
     stepNumber = channel === "LINKEDIN_CONNECTION" ? 0 : 1,
     limit = 25,
+    assignSender = false,
+    ignoreSchedule = false,
+    linkedInAccountId: pinnedAccountId = null,
   } = options
 
   const campaign = await prisma.campaign.findFirst({
@@ -77,10 +89,28 @@ export async function generateQueue(options: GenerateOptions): Promise<GenerateR
     },
   })
 
-  const result: GenerateResult = { created: 0, skipped: 0, failures: [] }
+  const result: GenerateResult = { created: 0, skipped: 0, failures: [], blockedByCapacity: false }
 
   for (const lead of leads) {
     try {
+      // Reserve a sender before spending an AI call: drafting messages no
+      // account has room to send just creates queue debt.
+      let linkedInAccountId: string | null = null
+      if ((assignSender || pinnedAccountId) && channel !== "EMAIL") {
+        const picked = await pickSenderAccount({
+          workspaceId,
+          channel,
+          campaignId,
+          accountId: pinnedAccountId,
+          ignoreSchedule,
+        })
+        if (!picked) {
+          result.blockedByCapacity = true
+          break
+        }
+        linkedInAccountId = picked.accountId
+      }
+
       const history = lead.queueItems.map((q) => q.content)
 
       const content =
@@ -96,6 +126,7 @@ export async function generateQueue(options: GenerateOptions): Promise<GenerateR
           channel,
           stepNumber,
           content,
+          linkedInAccountId,
           status: "DRAFT",
         },
       })
@@ -167,12 +198,40 @@ export async function markSent(workspaceId: string, itemId: string) {
   if (!item) throw new Error("Queue item not found")
   if (item.status === "SENT") return item
 
-  const { allowed, usage } = await checkDailyLimit(workspaceId, item.channel)
-  if (!allowed) {
-    throw new Error(
-      `Daily limit reached for ${item.channel} (${usage?.sentToday}/${usage?.limit}). ` +
-        `Stop for today — raise the cap in Settings only if you know your account can take it.`
-    )
+  // When the draft is bound to a sender account, that account's own cap is
+  // the one that matters — a workspace-wide number would let one profile
+  // absorb everyone else's headroom.
+  if (item.linkedInAccountId && item.channel !== "EMAIL") {
+    const account = await prisma.linkedInAccount.findUnique({ where: { id: item.linkedInAccountId } })
+    if (account) {
+      const startOfDay = new Date()
+      startOfDay.setHours(0, 0, 0, 0)
+
+      const sentToday = await prisma.sendQueueItem.count({
+        where: {
+          linkedInAccountId: account.id,
+          channel: item.channel,
+          status: "SENT",
+          sentAt: { gte: startOfDay },
+        },
+      })
+      const cap = effectiveLimit(account, item.channel)
+
+      if (sentToday >= cap) {
+        throw new Error(
+          `${account.name} has hit today's ${item.channel} cap (${sentToday}/${cap}). ` +
+            `Switch to another sender or continue tomorrow.`
+        )
+      }
+    }
+  } else {
+    const { allowed, usage } = await checkDailyLimit(workspaceId, item.channel)
+    if (!allowed) {
+      throw new Error(
+        `Daily limit reached for ${item.channel} (${usage?.sentToday}/${usage?.limit}). ` +
+          `Stop for today — raise the cap in Settings only if you know your account can take it.`
+      )
+    }
   }
 
   const now = new Date()
