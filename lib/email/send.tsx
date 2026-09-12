@@ -19,21 +19,37 @@ export interface SendResult {
   error?: string
 }
 
-const UNSUBSCRIBE_SECRET =
-  process.env.UNSUBSCRIBE_SECRET ?? "default-unsubscribe-secret-change-me"
+function unsubscribeSecret(): string {
+  const secret = process.env.UNSUBSCRIBE_SECRET
+  if (secret) return secret
+  // A guessable secret lets anyone forge tokens and unsubscribe every lead,
+  // so outside local development there is no fallback.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("UNSUBSCRIBE_SECRET is not set — required to send email in production")
+  }
+  return "dev-only-unsubscribe-secret"
+}
 
 export function generateUnsubscribeToken(leadId: string): string {
-  return crypto
-    .createHash("sha256")
-    .update(leadId + UNSUBSCRIBE_SECRET)
-    .digest("hex")
+  return crypto.createHmac("sha256", unsubscribeSecret()).update(leadId).digest("hex")
+}
+
+export function buildUnsubscribeUrl(leadId: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
+  const params = new URLSearchParams({ leadId, token: generateUnsubscribeToken(leadId) })
+  return `${base}/api/email/unsubscribe?${params.toString()}`
 }
 
 export function verifyUnsubscribeToken(
   leadId: string,
   token: string
 ): boolean {
-  const expected = generateUnsubscribeToken(leadId)
+  let expected: string
+  try {
+    expected = generateUnsubscribeToken(leadId)
+  } catch {
+    return false
+  }
   const expectedBuf = Buffer.from(expected)
   const tokenBuf = Buffer.from(token)
 
@@ -64,11 +80,18 @@ export async function sendOutreachEmail(
     )
 
     const unsubscribeToken = generateUnsubscribeToken(leadId)
+    const unsubscribeUrl = buildUnsubscribeUrl(leadId)
 
     const { data, error } = await resend.emails.send({
       from: `${fromName} <${fromEmail}>`,
       to: [toEmail],
       subject,
+      // RFC 8058 one-click unsubscribe. Gmail/Yahoo require this for bulk
+      // senders; the POST handler on the route honours it.
+      headers: {
+        "List-Unsubscribe": `<${unsubscribeUrl}>`,
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+      },
       react: (
         <OutreachEmail
           firstName={toName}

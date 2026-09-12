@@ -12,14 +12,26 @@ export async function getCurrentDbUser(): Promise<WorkspaceContext | null> {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (!user) return null
+  if (!user?.email) return null
 
   const dbUser = await prisma.user.findUnique({
-    where: { email: user.email! },
+    where: { email: user.email },
     select: { id: true, workspaceId: true },
   })
+  if (dbUser) return dbUser
 
-  return dbUser
+  // First sign-in: nothing else creates the app-side user, so give them a
+  // workspace of their own here. Without this every API call would 401.
+  const workspace = await prisma.workspace.create({
+    data: {
+      name: `${user.email.split("@")[0]}'s workspace`,
+      users: { create: { email: user.email, name: user.user_metadata?.name ?? null } },
+      settings: { create: {} },
+    },
+    include: { users: { select: { id: true } } },
+  })
+
+  return { id: workspace.users[0].id, workspaceId: workspace.id }
 }
 
 /**

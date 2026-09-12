@@ -10,6 +10,7 @@ import {
   type Tone,
 } from "@/lib/ai/message-engine"
 import { checkDailyLimit } from "./limits"
+import { sendOutreachEmail } from "@/lib/email/send"
 import { effectiveLimit, pickSenderAccount } from "@/lib/linkedin/accounts"
 
 export interface GenerateOptions {
@@ -184,7 +185,7 @@ async function draftForChannel({
   }
 
   if (channel === "EMAIL") {
-    const email = await draftEmail(workspaceId, lead, sender, stepNumber)
+    const email = await draftEmail(workspaceId, lead, sender, stepNumber, history)
     return { subject: email.subject, content: email.body }
   }
 
@@ -223,13 +224,17 @@ export async function regenerateItem(workspaceId: string, itemId: string, tone?:
 }
 
 /**
- * Called after the operator has actually sent the message in LinkedIn.
- * Records the fact, advances the lead, and schedules the next step's due date.
+ * LinkedIn items: called after the operator has actually sent the message in
+ * LinkedIn. EMAIL items: sends the email through Resend right here, and only
+ * marks the item SENT if delivery was accepted.
+ * Either way it records the fact, advances the lead, and schedules the next
+ * step's due date.
  */
 export async function markSent(workspaceId: string, itemId: string) {
   const item = await prisma.sendQueueItem.findFirst({
     where: { id: itemId, workspaceId },
     include: {
+      campaign: { select: { name: true, fromName: true, fromEmail: true } },
       lead: {
         include: {
           enrollment: {
@@ -278,6 +283,32 @@ export async function markSent(workspaceId: string, itemId: string) {
     }
   }
 
+  // An email draft is sent by us, not copied out by a human. A failed send
+  // leaves the item in the queue so the operator can see and retry it.
+  if (item.channel === "EMAIL") {
+    if (!item.lead.email) throw new Error("This lead has no email address")
+
+    const fromEmail = item.campaign?.fromEmail ?? process.env.RESEND_FROM_EMAIL
+    if (!fromEmail) {
+      throw new Error("No sender address: set the campaign's from email or RESEND_FROM_EMAIL")
+    }
+
+    const result = await sendOutreachEmail({
+      toEmail: item.lead.email,
+      toName: item.lead.firstName,
+      fromName: item.campaign?.fromName ?? "Outreach Team",
+      fromEmail,
+      subject: item.subject?.trim() || item.campaign?.name || `quick question, ${item.lead.firstName}`,
+      messageContent: item.content,
+      leadId: item.leadId,
+      workspaceId,
+    })
+
+    if (!result.success) {
+      throw new Error(`Email not sent: ${result.error ?? "provider rejected the message"}`)
+    }
+  }
+
   const now = new Date()
 
   const [updated] = await prisma.$transaction([
@@ -292,21 +323,22 @@ export async function markSent(workspaceId: string, itemId: string) {
         status: item.lead.status === "NEW" ? "CONTACTED" : item.lead.status,
       },
     }),
-    prisma.message.create({
-      data: {
-        leadId: item.leadId,
-        content: item.content,
-        type:
-          item.channel === "LINKEDIN_CONNECTION"
-            ? "LINKEDIN_CONNECTION"
-            : item.channel === "LINKEDIN_MESSAGE"
-              ? "LINKEDIN_MESSAGE"
-              : "EMAIL",
-        direction: "OUTBOUND",
-        status: "SENT",
-        sentAt: now,
-      },
-    }),
+    // sendOutreachEmail() already wrote the EMAIL message row (with the Resend
+    // id); LinkedIn sends are logged here because nothing else sees them.
+    ...(item.channel === "EMAIL"
+      ? []
+      : [
+          prisma.message.create({
+            data: {
+              leadId: item.leadId,
+              content: item.content,
+              type: item.channel === "LINKEDIN_CONNECTION" ? "LINKEDIN_CONNECTION" : "LINKEDIN_MESSAGE",
+              direction: "OUTBOUND",
+              status: "SENT",
+              sentAt: now,
+            },
+          }),
+        ]),
   ])
 
   await logActivity({

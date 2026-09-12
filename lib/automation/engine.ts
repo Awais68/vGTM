@@ -136,8 +136,8 @@ async function executeAction(input: ExecuteInput): Promise<ActionOutcome> {
       const leads = await selectLeads({ workspaceId, campaignId, leadId, conditions, context, take: 500 })
       let enrolled = 0
       for (const lead of leads) {
-        await enrollLead(lead.id, params.sequenceId)
-        enrolled++
+        const { outcome } = await enrollLead(lead.id, params.sequenceId)
+        if (outcome !== "unchanged") enrolled++
       }
       return { action: action.type, affected: enrolled, message: `Enrolled ${enrolled} leads` }
     }
@@ -297,9 +297,28 @@ interface SelectLeadsInput {
 async function selectLeads(input: SelectLeadsInput) {
   const { workspaceId, campaignId, leadId, conditions, context, take } = input
 
+  // Every OR goes inside AND. Two top-level `OR` keys in one object literal
+  // silently overwrite each other, which used to drop the workspace filter
+  // whenever daysSinceLastTouch was set and let a rule touch every tenant.
+  const scope: Prisma.LeadWhereInput[] = [
+    {
+      OR: [
+        { workspaceId },
+        // Legacy rows with no workspaceId are only ours if their campaign is.
+        { workspaceId: null, campaign: { workspaceId } },
+      ],
+    },
+  ]
+
+  if (conditions.daysSinceLastTouch !== undefined) {
+    scope.push({
+      OR: [{ lastTouchAt: null }, { lastTouchAt: { lte: daysAgo(conditions.daysSinceLastTouch) } }],
+    })
+  }
+
   const where: Prisma.LeadWhereInput = {
     unsubscribed: false,
-    OR: [{ workspaceId }, { workspaceId: null }],
+    AND: scope,
     ...(campaignId ? { campaignId } : {}),
     ...(leadId ? { id: leadId } : {}),
     // A LEAD_IMPORTED run should only touch that import, not the whole table.
@@ -307,14 +326,6 @@ async function selectLeads(input: SelectLeadsInput) {
     ...(conditions.leadStatus?.length ? { status: { in: conditions.leadStatus } } : {}),
     ...(conditions.hasLinkedIn ? { linkedinUrl: { not: null } } : {}),
     ...(conditions.hasEmail ? { email: { not: null } } : {}),
-    ...(conditions.daysSinceLastTouch !== undefined
-      ? {
-          OR: [
-            { lastTouchAt: null },
-            { lastTouchAt: { lte: daysAgo(conditions.daysSinceLastTouch) } },
-          ],
-        }
-      : {}),
   }
 
   return prisma.lead.findMany({

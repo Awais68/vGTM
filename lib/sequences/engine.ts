@@ -1,7 +1,7 @@
 import { addDays } from "date-fns"
 import { prisma } from "@/lib/prisma"
 import { sendOutreachEmail } from "@/lib/email/send"
-import { draftConnectionNote, draftFollowUp, loadSenderContext } from "@/lib/ai/message-engine"
+import { draftConnectionNote, draftEmail, draftFollowUp, loadSenderContext } from "@/lib/ai/message-engine"
 import { logActivity } from "@/lib/queue/service"
 
 /** A step template of exactly this value means "let the AI write it". */
@@ -26,12 +26,53 @@ export function renderTemplate(template: string, lead: MergeableLead): string {
   return template.replace(MERGE_TAG_PATTERN, (_, key: string) => values[key] ?? "")
 }
 
-export async function enrollLead(leadId: string, sequenceId: string) {
-  return prisma.sequenceEnrollment.upsert({
+export type EnrollOutcome = "created" | "resumed" | "restarted" | "unchanged"
+
+/**
+ * Puts a lead into a sequence without ever replaying steps they already got.
+ *
+ * - No enrollment yet → start at step 0.
+ * - Already ACTIVE / NEEDS_REVIEW / COMPLETED in this sequence → leave it alone.
+ *   Re-launching a campaign must not send step 0 to people who had it.
+ * - STOPPED in this sequence → resume from where it stopped.
+ * - Enrolled in a different sequence → switch and start that one from step 0;
+ *   the operator asked for a different sequence, so that is deliberate.
+ */
+export async function enrollLead(
+  leadId: string,
+  sequenceId: string
+): Promise<{ enrollment: import("@prisma/client").SequenceEnrollment; outcome: EnrollOutcome }> {
+  const existing = await prisma.sequenceEnrollment.findUnique({ where: { leadId } })
+
+  if (!existing) {
+    const enrollment = await prisma.sequenceEnrollment.create({
+      data: { leadId, sequenceId, currentStep: 0, status: "ACTIVE", nextSendAt: new Date() },
+    })
+    return { enrollment, outcome: "created" }
+  }
+
+  if (existing.sequenceId === sequenceId) {
+    if (existing.status !== "STOPPED") return { enrollment: existing, outcome: "unchanged" }
+
+    const enrollment = await prisma.sequenceEnrollment.update({
+      where: { leadId },
+      data: { status: "ACTIVE", nextSendAt: new Date(), failureCount: 0, lastError: null },
+    })
+    return { enrollment, outcome: "resumed" }
+  }
+
+  const enrollment = await prisma.sequenceEnrollment.update({
     where: { leadId },
-    create: { leadId, sequenceId, currentStep: 0, status: "ACTIVE", nextSendAt: new Date() },
-    update: { sequenceId, currentStep: 0, status: "ACTIVE", nextSendAt: new Date() },
+    data: {
+      sequenceId,
+      currentStep: 0,
+      status: "ACTIVE",
+      nextSendAt: new Date(),
+      failureCount: 0,
+      lastError: null,
+    },
   })
+  return { enrollment, outcome: "restarted" }
 }
 
 export type ProcessResult =
@@ -170,6 +211,15 @@ export async function processDueStep(enrollmentId: string): Promise<ProcessResul
     })
 
     if (existing) {
+      // The operator already dealt with this step (sent it, or chose to skip
+      // it) — e.g. a draft made from the Generate panel before the cron got
+      // here. Parking would strand the enrollment; move to the next step.
+      if (existing.status === "SENT" || existing.status === "SKIPPED") {
+        await advance(nextStep ? "ACTIVE" : "COMPLETED")
+        return { outcome: "skipped", reason: `step_already_${existing.status.toLowerCase()}` }
+      }
+
+      // Still DRAFT/READY: wait for the human. markSent() moves the cursor.
       await prisma.sequenceEnrollment.update({
         where: { id: enrollmentId },
         data: { nextSendAt: null },
@@ -239,8 +289,48 @@ export async function processDueStep(enrollmentId: string): Promise<ProcessResul
     return { outcome: "skipped", reason: "no_from_email_configured" }
   }
 
-  const subject = renderTemplate(step.subject ?? campaign.name, enrollment.lead)
-  const body = renderTemplate(step.template, enrollment.lead)
+  let subject = renderTemplate(step.subject ?? campaign.name, enrollment.lead)
+  let body = renderTemplate(step.template, enrollment.lead)
+
+  // {{ai}} on an email step: write this email for this lead, not a template.
+  // A failed draft is a retryable failure, not a blank email out the door.
+  if (step.template.trim() === AI_TEMPLATE_MARKER) {
+    try {
+      const sender = await loadSenderContext(campaign.workspaceId, {
+        senderName: campaign.fromName ?? undefined,
+        offerContext: campaign.offerContext ?? undefined,
+      })
+      const previous = await prisma.message.findMany({
+        where: { leadId: enrollment.leadId, type: "EMAIL", status: "SENT" },
+        orderBy: { sentAt: "asc" },
+        select: { content: true },
+      })
+      const draft = await draftEmail(
+        campaign.workspaceId,
+        enrollment.lead,
+        sender,
+        step.stepNumber,
+        previous.map((m) => m.content)
+      )
+      subject = step.subject ? subject : draft.subject
+      body = draft.body
+    } catch (error) {
+      const failures = enrollment.failureCount + 1
+      const giveUp = failures >= MAX_FAILURES
+      const reason = `AI draft failed: ${error instanceof Error ? error.message : "unknown"}`
+      await prisma.sequenceEnrollment.update({
+        where: { id: enrollmentId },
+        data: {
+          failureCount: failures,
+          lastError: reason,
+          ...(giveUp
+            ? { status: "STOPPED" as const, nextSendAt: null }
+            : { nextSendAt: new Date(Date.now() + failures * 30 * 60 * 1000) }),
+        },
+      })
+      return giveUp ? { outcome: "skipped", reason } : { outcome: "retry", reason }
+    }
+  }
 
   const result = await sendWithRetry({
     toEmail: enrollment.lead.email,

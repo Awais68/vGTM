@@ -59,8 +59,11 @@ export async function POST(
     )
   }
 
+  // Re-launching is safe: leads already in the sequence keep their place.
+  const counts = { created: 0, resumed: 0, restarted: 0, unchanged: 0 }
   for (const lead of eligibleLeads) {
-    await enrollLead(lead.id, sequence.id)
+    const { outcome } = await enrollLead(lead.id, sequence.id)
+    counts[outcome]++
   }
 
   const updated = await prisma.campaign.update({
@@ -68,5 +71,10 @@ export async function POST(
     data: { status: "ACTIVE", totalCount: eligibleLeads.length },
   })
 
-  return NextResponse.json({ success: true, data: { campaign: updated, enrolled: eligibleLeads.length } })
+  const enrolled = counts.created + counts.resumed + counts.restarted
+
+  return NextResponse.json({
+    success: true,
+    data: { campaign: updated, enrolled, alreadyEnrolled: counts.unchanged, counts },
+  })
 }

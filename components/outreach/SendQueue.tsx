@@ -243,7 +243,11 @@ export function SendQueue() {
 
       setItems((prev) => prev.filter((i) => i.id !== item.id))
       if (action === "sent") {
-        toast.success(`Logged as sent to ${item.lead.firstName}`)
+        toast.success(
+          item.channel === "EMAIL"
+            ? `Email sent to ${item.lead.firstName}`
+            : `Logged as sent to ${item.lead.firstName}`
+        )
         void refreshSenders()
         setUsage((prev) =>
           prev.map((u) =>
@@ -547,7 +551,7 @@ function QueueCard({
             onClick={() => onAction("sent")}
           >
             <Check className="w-4 h-4 mr-2" />
-            I sent this
+            {item.channel === "EMAIL" ? "Send email" : "I sent this"}
           </Button>
 
           <Button size="sm" variant="ghost" disabled={busy} onClick={() => onAction("skip")}>
