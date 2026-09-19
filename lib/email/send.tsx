@@ -1,3 +1,4 @@
+import { getAppUrl } from "@/lib/app-url"
 import crypto from "node:crypto"
 import { prisma } from "@/lib/prisma"
 import { getResendClient } from "./client"
@@ -35,7 +36,7 @@ export function generateUnsubscribeToken(leadId: string): string {
 }
 
 export function buildUnsubscribeUrl(leadId: string): string {
-  const base = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
+  const base = getAppUrl()
   const params = new URLSearchParams({ leadId, token: generateUnsubscribeToken(leadId) })
   return `${base}/api/email/unsubscribe?${params.toString()}`
 }

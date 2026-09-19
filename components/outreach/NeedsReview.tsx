@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { LoadErrorState } from "@/components/ui/load-error-state"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Loader2, Mail, PauseCircle, PlayCircle } from "lucide-react"
@@ -23,16 +24,21 @@ interface ReviewItem {
 export function NeedsReview() {
   const [items, setItems] = useState<ReviewItem[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [actingOn, setActingOn] = useState<string | null>(null)
 
   async function fetchItems() {
     setLoading(true)
+    setLoadError(null)
     try {
       const response = await fetch("/api/leads/needs-review")
       const json = await response.json()
-      setItems(json.success ? json.data : [])
+      if (json.success) setItems(json.data)
+      else setLoadError(json.error ?? "Could not load the review list")
     } catch {
-      setItems([])
+      // "No replies waiting" is a promise to the user; do not make it when
+      // the request itself failed.
+      setLoadError("Could not load the review list. Check that the database is reachable.")
     } finally {
       setLoading(false)
     }
@@ -68,6 +74,8 @@ export function NeedsReview() {
           <Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />
           Loading...
         </div>
+      ) : loadError ? (
+        <LoadErrorState message={loadError} onRetry={fetchItems} />
       ) : items.length === 0 ? (
         <div className="bg-white rounded-lg border p-8 text-center text-gray-500">
           No replies waiting on you. Engaged leads and open questions will show up here.

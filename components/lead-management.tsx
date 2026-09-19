@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useState } from "react"
+import { LoadErrorState } from "@/components/ui/load-error-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
@@ -67,21 +68,30 @@ export function LeadManagement() {
   const [selectedCampaign, setSelectedCampaign] = useState<string>("")
   const [leads, setLeads] = useState<Lead[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [campaignsVersion, setCampaignsVersion] = useState(0)
 
   useEffect(() => {
     async function fetchCampaigns() {
+      setLoadError(null)
       try {
         const response = await fetch("/api/campaigns")
         const json = await response.json()
+        if (!json.success) {
+          setLoadError(json.error ?? "Could not load campaigns")
+          return
+        }
         const data: CampaignOption[] = json.data ?? []
         setCampaigns(data)
         if (data.length > 0) setSelectedCampaign(data[0].id)
       } catch {
-        setCampaigns([])
+        // Without campaigns the table would read "create a campaign to get
+        // started", which is wrong when the request failed.
+        setLoadError("Could not load campaigns. Check that the database is reachable.")
       }
     }
     fetchCampaigns()
-  }, [])
+  }, [campaignsVersion])
 
   const fetchLeads = useCallback(async () => {
     if (!selectedCampaign) {
@@ -89,12 +99,14 @@ export function LeadManagement() {
       return
     }
     setLoading(true)
+    setLoadError(null)
     try {
       const response = await fetch(`/api/leads?campaignId=${selectedCampaign}`)
       const json = await response.json()
-      setLeads(json.success ? json.data : [])
+      if (json.success) setLeads(json.data)
+      else setLoadError(json.error ?? "Could not load leads")
     } catch {
-      setLeads([])
+      setLoadError("Could not load leads. Check that the database is reachable.")
     } finally {
       setLoading(false)
     }
@@ -186,6 +198,16 @@ export function LeadManagement() {
                   <td colSpan={8} className="p-8 text-center text-gray-400">
                     <Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />
                     Loading leads...
+                  </td>
+                </tr>
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={8} className="p-0">
+                    <LoadErrorState
+                      message={loadError}
+                      onRetry={() => (selectedCampaign ? fetchLeads() : setCampaignsVersion((v) => v + 1))}
+                      bordered={false}
+                    />
                   </td>
                 </tr>
               ) : filteredLeads.length === 0 ? (

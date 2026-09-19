@@ -1,3 +1,4 @@
+import { getAppUrl } from "@/lib/app-url"
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { LanguageModel } from 'ai'
@@ -26,7 +27,7 @@ export function getLanguageModel(config: AIConfig): LanguageModel {
         baseURL: 'https://openrouter.ai/api/v1',
         apiKey: config.apiKey,
         headers: {
-          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
+          'HTTP-Referer': getAppUrl(),
           'X-Title': 'vGTM Outreach',
         },
       })

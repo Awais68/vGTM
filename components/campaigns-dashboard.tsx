@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import { LoadErrorState } from "@/components/ui/load-error-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -12,7 +13,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
-import { toast } from "sonner"
 
 interface CampaignsDashboardProps {
   onCreateCampaign: () => void
@@ -38,19 +38,28 @@ const STATUS_COLORS: Record<string, string> = {
 export function CampaignsDashboard({ onCreateCampaign, onViewCampaign }: CampaignsDashboardProps) {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [search, setSearch] = useState("")
   const [statusFilter, setStatusFilter] = useState("all")
 
-  useEffect(() => {
+  const load = useCallback(() => {
+    setLoading(true)
+    setLoadError(null)
     fetch("/api/campaigns")
       .then((r) => r.json())
       .then((json) => {
         if (json.success) setCampaigns(json.data)
-        else toast.error(json.error ?? "Could not load campaigns")
+        else setLoadError(json.error ?? "Could not load campaigns")
       })
-      .catch(() => toast.error("Could not load campaigns"))
+      // A failed load must not look like "no campaigns yet" — that sends the
+      // user off to create a duplicate while the database is unreachable.
+      .catch(() => setLoadError("Could not load campaigns. Check that the database is reachable."))
       .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase()
@@ -110,6 +119,8 @@ export function CampaignsDashboard({ onCreateCampaign, onViewCampaign }: Campaig
             <Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />
             Loading campaigns...
           </div>
+        ) : loadError ? (
+          <LoadErrorState message={loadError} onRetry={load} />
         ) : filtered.length === 0 ? (
           <div className="p-8 text-center text-gray-500">
             {campaigns.length === 0

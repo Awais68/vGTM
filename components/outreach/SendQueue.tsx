@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import { LoadErrorState } from "@/components/ui/load-error-state"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Textarea } from "@/components/ui/textarea"
@@ -85,6 +86,7 @@ export function SendQueue() {
   const [usage, setUsage] = useState<Usage[]>([])
   const [campaigns, setCampaigns] = useState<CampaignOption[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -100,6 +102,7 @@ export function SendQueue() {
 
   const load = useCallback(async () => {
     setLoading(true)
+    setLoadError(null)
     try {
       const senderParam =
         senderFilter === "active" && activeAccountId ? `&linkedInAccountId=${activeAccountId}` : ""
@@ -109,10 +112,12 @@ export function SendQueue() {
         setItems(json.data.items)
         setUsage(json.data.usage)
       } else {
-        toast.error(json.error ?? "Could not load the queue")
+        setLoadError(json.error ?? "Could not load the queue")
       }
     } catch {
-      toast.error("Could not load the queue")
+      // Keep the failure on screen: an empty queue and a dead database must
+      // not look the same.
+      setLoadError("Could not load the queue. Check that the database is reachable.")
     } finally {
       setLoading(false)
     }
@@ -416,6 +421,8 @@ export function SendQueue() {
           <Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />
           Loading queue...
         </div>
+      ) : loadError ? (
+        <LoadErrorState message={loadError} onRetry={load} />
       ) : items.length === 0 ? (
         <div className="bg-white rounded-lg border p-8 text-center text-gray-500">
           Nothing here. Generate drafts above to fill the queue.
