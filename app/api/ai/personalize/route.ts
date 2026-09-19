@@ -1,5 +1,6 @@
 import { streamText } from 'ai'
 import { getAIModel } from '@/lib/ai/get-client'
+import { aiCallOptions, describeAiError } from '@/lib/ai/timeout'
 import { NextRequest } from 'next/server'
 import { requireWorkspace } from '@/lib/auth/get-current-user'
 import { z } from 'zod'
@@ -32,13 +33,14 @@ export async function POST(req: NextRequest) {
     }
 
     const result = streamText({
+      ...aiCallOptions(),
       model,
       prompt: prompts[body.type],
     })
 
     return result.toTextStreamResponse()
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'AI generation failed'
+    const message = describeAiError(err)
     return Response.json({ success: false, error: message }, { status: 500 })
   }
 }

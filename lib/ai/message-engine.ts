@@ -1,5 +1,6 @@
 import { generateText } from "ai"
 import { getAIModel } from "./get-client"
+import { aiCallOptions } from "./timeout"
 import { prisma } from "@/lib/prisma"
 
 export type Tone = "FRIENDLY_DIRECT" | "FORMAL" | "CASUAL" | "CONSULTATIVE" | "BLUNT"
@@ -149,6 +150,7 @@ export async function draftConnectionNote(
   const model = await getAIModel(workspaceId)
 
   const { text } = await generateText({
+    ...aiCallOptions(),
     model,
     prompt: `Write a LinkedIn connection request note.
 
@@ -205,6 +207,7 @@ export async function draftFollowUp(
     : ""
 
   const { text } = await generateText({
+    ...aiCallOptions(),
     model,
     prompt: `Write LinkedIn follow-up message #${stepNumber} in an outreach sequence.
 
@@ -270,7 +273,7 @@ BODY:
 <body text>`
 
   const generate = async (extra = "") => {
-    const { text } = await generateText({ model, prompt: basePrompt + extra })
+    const { text } = await generateText({ ...aiCallOptions(), model, prompt: basePrompt + extra })
     return parseEmail(text, lead)
   }
 

@@ -1,6 +1,7 @@
 import { generateObject } from "ai"
 import { z } from "zod"
 import { getAIModel } from "@/lib/ai/get-client"
+import { AI_JOB_TIMEOUT_MS, aiCallOptions, describeAiError } from "@/lib/ai/timeout"
 import { extractLeadsFromText, type HeuristicLead } from "./text-heuristics"
 
 const LeadSchema = z.object({
@@ -42,9 +43,20 @@ export async function extractLeadsWithAI(
     const model = await getAIModel(workspaceId)
     const chunks = chunk(trimmed, CHUNK_CHARS)
     const collected: HeuristicLead[] = []
+    // One budget for the whole document, not per chunk: eight slow chunks
+    // would otherwise outlast the request itself.
+    const deadline = Date.now() + AI_JOB_TIMEOUT_MS
+    let ranOutOfTime = false
 
     for (const part of chunks.slice(0, 8)) {
+      const remaining = deadline - Date.now()
+      if (remaining <= 1_000) {
+        ranOutOfTime = true
+        break
+      }
+
       const { object } = await generateObject({
+        ...aiCallOptions(remaining),
         model,
         schema: ExtractionSchema,
         prompt: `Extract every person who could be an outreach lead from the document below.
@@ -72,8 +84,11 @@ ${part}`,
       }
     }
 
-    const warning =
-      chunks.length > 8 ? "Document was long — only the first 8 chunks were read." : undefined
+    const warning = ranOutOfTime
+      ? "AI ran out of time on this document — only the part read so far is shown."
+      : chunks.length > 8
+        ? "Document was long — only the first 8 chunks were read."
+        : undefined
 
     // A model that returns nothing on a document that clearly has emails in it
     // is worse than the regex pass, so cross-check.
@@ -86,7 +101,7 @@ ${part}`,
 
     return { leads: dedupe(collected), method: "ai", warning }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : "AI extraction failed"
+    const reason = describeAiError(error)
     return {
       leads: extractLeadsFromText(trimmed),
       method: "heuristic",

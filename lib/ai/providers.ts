@@ -15,7 +15,7 @@ export interface AIConfig {
 // models cost nothing but are rate limited. Override per workspace in the
 // Admin Panel, or globally with AI_MODEL.
 export const DEFAULT_MODELS: Record<AIProvider, string> = {
-  OPENROUTER: 'google/gemini-2.0-flash-exp:free',
+  OPENROUTER: 'deepseek/deepseek-v4-flash-0731:free',
   GEMINI: 'gemini-2.0-flash',
   OPENAI: 'gpt-4o-mini',
 }

@@ -19,9 +19,8 @@ export async function GET(
       name: true,
       status: true,
       offerContext: true,
-      sentCount: true,
-      totalCount: true,
       createdAt: true,
+      _count: { select: { leads: true } },
     },
   })
 
@@ -29,15 +28,25 @@ export async function GET(
     return NextResponse.json({ success: false, error: "Campaign not found", code: "NOT_FOUND" }, { status: 404 })
   }
 
-  const [funnel, series, steps, statuses] = await Promise.all([
+  const [funnel, series, steps, statuses, sentCount] = await Promise.all([
     getFunnel(ctx.workspaceId, id),
     getDailySeries(ctx.workspaceId, 30, id),
     getStepBreakdown(ctx.workspaceId, id),
     getLeadStatusBreakdown(ctx.workspaceId, id),
+    // Derived, for the same reason as /api/campaigns: the stored counters drift.
+    prisma.sendQueueItem.count({ where: { campaignId: id, status: "SENT" } }),
   ])
+
+  const { _count, ...rest } = campaign
 
   return NextResponse.json({
     success: true,
-    data: { campaign, funnel, series, steps, statuses },
+    data: {
+      campaign: { ...rest, sentCount, totalCount: _count.leads },
+      funnel,
+      series,
+      steps,
+      statuses,
+    },
   })
 }
