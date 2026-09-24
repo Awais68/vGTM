@@ -1,6 +1,6 @@
-# vGTM — AI-Powered Outreach System
+# LinkedIn & Email Lead Automation (vGTM)
 
-> AI drafts every message. A human sends the LinkedIn ones. The dashboard
+> AI-powered lead automation for LinkedIn and email. AI drafts every message,
 > keeps score.
 
 ![Next.js](https://img.shields.io/badge/Next.js-000?style=flat&logo=nextdotjs)
