@@ -1,7 +1,7 @@
 # LinkedIn & Email Lead Automation (vGTM)
 
 > AI-powered lead automation for LinkedIn and email. AI drafts every message,
-> keeps score.
+> a human sends the LinkedIn ones, and the dashboard keeps score.
 
 ![Next.js](https://img.shields.io/badge/Next.js-000?style=flat&logo=nextdotjs)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)
