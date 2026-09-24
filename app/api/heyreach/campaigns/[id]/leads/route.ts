@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma"
 import { getHeyReachClient } from "@/lib/heyreach/get-client"
 import { addLeadsSchema } from "@/lib/validators/heyreach"
 import { HeyReachAuthError, HeyReachApiError } from "@/lib/heyreach/client"
-import type { HeyReachLead } from "@/lib/heyreach/types"
 
 export async function POST(
   request: NextRequest,
@@ -67,23 +66,15 @@ export async function POST(
     const client = await getHeyReachClient(dbUser.workspaceId)
     const result = await client.addLeadsToCampaign(campaignId, parsed.data.leads)
 
-    const leadsToSave: Array<{
-      firstName: string
-      lastName: string | null
-      email: string | null
-      linkedinUrl: string | null
-      company: string | null
-      jobTitle: string | null
-      campaignId: string
-    }> = []
+    // Only save leads into a campaign this workspace owns; a HeyReach id alone
+    // could match another tenant's campaign.
+    const existingCampaign = await prisma.campaign.findFirst({
+      where: { heyreachCampaignId: campaignId, workspaceId: dbUser.workspaceId },
+      select: { id: true },
+    })
 
-    for (const lead of parsed.data.leads) {
-      const existingCampaign = await prisma.campaign.findFirst({
-        where: { heyreachCampaignId: campaignId },
-      })
-
-      if (existingCampaign) {
-        leadsToSave.push({
+    const leadsToSave = existingCampaign
+      ? parsed.data.leads.map((lead) => ({
           firstName: lead.firstName,
           lastName: lead.lastName ?? null,
           email: lead.email ?? null,
@@ -91,9 +82,8 @@ export async function POST(
           company: lead.company ?? null,
           jobTitle: lead.jobTitle ?? null,
           campaignId: existingCampaign.id,
-        })
-      }
-    }
+        }))
+      : []
 
     if (leadsToSave.length > 0) {
       await prisma.lead.createMany({

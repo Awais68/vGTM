@@ -5,7 +5,9 @@
 
 ![Next.js](https://img.shields.io/badge/Next.js-000?style=flat&logo=nextdotjs)
 ![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=flat&logo=typescript&logoColor=white)
-![Status](https://img.shields.io/badge/Status-Active%20Development-green)
+![Status](https://img.shields.io/badge/Status-Feature%20Complete-brightgreen)
+![Build](https://img.shields.io/badge/Build-Passing-brightgreen)
+![Deploy](https://img.shields.io/badge/Production-Pending%20Setup-orange)
 
 ## What this does
 - **Lead CRM** — import CSVs, assign leads to campaigns, track status
@@ -17,6 +19,52 @@
 - **Analytics** — funnel, 30-day trend, per-step and per-campaign breakdowns,
   all derived from an append-only `Activity` log
 - **Email** — real automated sending via Resend (with unsubscribe handling)
+
+## Project status
+
+**Code: feature complete.** `npx tsc --noEmit` and `npm run build` both pass.
+**Production: not deployed yet** — it needs accounts and keys only the owner
+can create (see *What's left* below).
+
+### ✅ Completed
+
+| Module | What works |
+|---|---|
+| Auth | Supabase email login, middleware gate, auto workspace on first login |
+| Admin panel | `/admin` password login, AI / Resend / HeyReach keys per workspace |
+| Lead import | CSV, XLSX, JSON, PDF, DOCX, paste — preview, mapping, history, needs-review |
+| Lead CRM | Table, status, outcome logging, campaign assignment |
+| Campaigns & sequences | Multi-step, per-step delays, launch without re-sending old steps |
+| AI message engine | Per-lead connection notes, follow-ups, emails; rejects generic drafts; timeouts |
+| Send Queue | Review / edit / copy / regenerate / skip / "I sent this" with daily caps |
+| Email | Resend sending, retry + backoff, one-click unsubscribe, bounce/complaint webhook |
+| Reply detection | Resend inbound → AI classifies intent → pauses or stops the sequence |
+| LinkedIn senders | Sender accounts, optional HeyReach sync |
+| Automation | Rules engine + hourly autopilot draft top-up |
+| Analytics | Funnel, 30-day trend, per-step and per-campaign breakdowns |
+
+### 🟢 Running (automated, once deployed)
+
+| Job | Schedule | Does |
+|---|---|---|
+| `/api/cron/process-sequences` | every 15 min | Sends due emails, drafts LinkedIn steps into the queue. Rows are claimed first so overlapping runs never double-send |
+| `/api/cron/autopilot` | hourly | Tops up AI drafts per automation rules |
+| `/api/webhooks/resend` | on event | Marks bounces / complaints |
+| `/api/webhooks/resend-inbound` | on event | Logs replies and pauses the sequence |
+
+Locally: `npm run dev` → http://localhost:3000 (see Setup).
+
+### ⏳ What's left (owner action, not code)
+
+1. Supabase project → `DATABASE_URL`, `DIRECT_URL`, anon key → `npx prisma db push`
+2. Resend: verify a sending (sub)domain, API key, webhooks → `RESEND_*`, `UNSUBSCRIBE_SECRET`
+3. AI key (Gemini free tier is enough)
+4. Vercel: import repo, add env vars, set `CRON_SECRET`; **Pro plan** for the 15-min cron
+5. Custom domain → `NEXT_PUBLIC_APP_URL`, Supabase redirect URL
+6. Run the launch checklist in [`requirements.md`](requirements.md) §8
+
+Full step-by-step guide (Roman Urdu): [`requirements.md`](requirements.md).
+Known limitations: `requirements.md` §9.
 
 ## How the LinkedIn flow works (human-in-the-loop)
 

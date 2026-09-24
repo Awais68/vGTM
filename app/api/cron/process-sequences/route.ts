@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma"
 import { processDueStep } from "@/lib/sequences/engine"
 
 const BATCH_SIZE = 50
+/** How long a claimed enrollment is hidden from overlapping cron runs. */
+const CLAIM_LEASE_MS = 30 * 60 * 1000
 
 export async function GET(request: NextRequest) {
   const authHeader = request.headers.get("authorization")
@@ -23,6 +25,20 @@ export async function GET(request: NextRequest) {
   // One bad enrollment (AI outage, malformed lead, provider hiccup) must not
   // take the rest of the batch down with it.
   for (const enrollment of due) {
+    // Claim the row before touching it. If a previous run is still going (a
+    // slow AI provider can push a batch past 15 min), whoever loses the claim
+    // skips it, so the same step is never sent twice. processDueStep always
+    // rewrites nextSendAt, so the lease only matters if the run dies midway.
+    const now = new Date()
+    const claim = await prisma.sequenceEnrollment.updateMany({
+      where: { id: enrollment.id, status: "ACTIVE", nextSendAt: { lte: now } },
+      data: { nextSendAt: new Date(now.getTime() + CLAIM_LEASE_MS) },
+    })
+    if (claim.count === 0) {
+      results.skipped++
+      continue
+    }
+
     results.processed++
     try {
       const result = await processDueStep(enrollment.id)

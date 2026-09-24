@@ -44,8 +44,16 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true })
   }
 
+  // `from` can arrive as "Sara Khan <sara@acme.com>". Match only a lead we
+  // actually emailed, most recent first, so the same address in another
+  // workspace (or an old, never-contacted import) is not touched.
+  const fromAddress = (event.data.from.match(/<([^>]+)>/)?.[1] ?? event.data.from).trim()
   const lead = await prisma.lead.findFirst({
-    where: { email: event.data.from },
+    where: {
+      email: { equals: fromAddress, mode: "insensitive" },
+      messages: { some: { type: "EMAIL", direction: "OUTBOUND", status: "SENT" } },
+    },
+    orderBy: { updatedAt: "desc" },
     include: { campaign: true },
   })
 

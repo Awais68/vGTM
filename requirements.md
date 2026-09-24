@@ -181,18 +181,20 @@ Option B — env fallback:
 Yeh cheezein code mein abhi theek nahi hain. Production use se pehle in par faisla lo.
 
 **Security**
-- `/api/ai/test` aur `/api/heyreach/verify` bina login ke accessible hain (server ko key-check proxy bana sakte hain). Rate limiting kahin nahi hai.
-- Admin password par brute-force limit nahi. Admin cookie password/salt change hone tak valid rehti hai.
+- Rate limiting kahin nahi hai (admin password par brute-force limit bhi nahi). Admin cookie password/salt change hone tak valid rehti hai.
 - API keys database mein plaintext hain (`WorkspaceSetting`). Supabase DB access ko tightly control karo.
-- Inbound reply webhook lead ko sirf email se dhoondta hai, workspace-scoped nahi; email body seedha AI classifier mein jati hai (prompt injection se status galat ho sakta hai).
-- HeyReach leads route (`/api/heyreach/campaigns/[id]/leads`) campaign ko workspace ke baghair dhoondta hai.
+- Inbound reply ki email body seedha AI classifier mein jati hai (prompt injection se status galat ho sakta hai).
 - Admin Panel sirf **pehle** workspace ki keys set karta hai. Multi-tenant use ke liye theek nahi.
 
 **Functional**
-- Email template (`emails/OutreachEmail.tsx`) khud "Hi {firstName}," aur signature lagata hai; AI draft mein greeting ho to double ho jayegi.
 - Follow-up emails thread nahi hoti (koi `In-Reply-To` header nahi), har email alag dikhti hai.
-- Cron par lock nahi; agar ek run 15 min se lamba chale to overlap mein duplicate send possible hai.
-- Reply detection Resend inbound par depend karti hai; `from` field format match na ho to reply detect nahi hogi.
+- Reply detection Resend inbound par depend karti hai.
+
+**Fix ho chuke (2026-09-24)**
+- Cron overlap: har enrollment pehle claim hoti hai, is liye do runs same step dobara nahi bhej sakte.
+- Email template AI draft ki apni greeting/sign-off detect kar ke apni wali skip karta hai (double "Hi" nahi).
+- HeyReach leads route aur inbound reply webhook ab workspace-safe hain (reply sirf us lead par lagti hai jise email bheji gayi thi; `Name <email>` format bhi match hota hai).
+- `/api/ai/test` aur `/api/heyreach/verify` middleware ki wajah se login ke baghair 401 dete hain.
 
 **Deliverability (cold email ke liye)**
 - Warm-up, inbox rotation, daily email caps kuch nahi hai. Serious cold email ke liye Instantly / Smartlead API ya Gmail/Outlook OAuth sending layer lagao aur Resend sirf transactional ke liye rakho.
