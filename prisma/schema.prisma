@@ -20,41 +20,83 @@ model User {
 }
 
 model Workspace {
-  id        String             @id @default(cuid())
-  name      String
-  users     User[]
-  campaigns Campaign[]
-  settings  WorkspaceSetting?
-  createdAt DateTime           @default(now())
+  id               String            @id @default(cuid())
+  name             String
+  users            User[]
+  campaigns        Campaign[]
+  settings         WorkspaceSetting?
+  linkedInAccounts LinkedInAccount[]
+  automationRules  AutomationRule[]
+  importBatches    ImportBatch[]
+  createdAt        DateTime          @default(now())
 }
 
 model WorkspaceSetting {
-  id              String    @id @default(cuid())
-  workspaceId     String    @unique
-  workspace       Workspace @relation(fields: [workspaceId], references: [id])
-  heyreachApiKey  String?
-  aiProvider      AIProvider @default(OPENROUTER)
-  aiApiKey        String?
-  aiModel         String?
-  resendApiKey    String?
-  updatedAt       DateTime  @updatedAt
+  id             String     @id @default(cuid())
+  workspaceId    String     @unique
+  workspace      Workspace  @relation(fields: [workspaceId], references: [id])
+  heyreachApiKey String?
+  aiProvider     AIProvider @default(OPENROUTER)
+  aiApiKey       String?
+  aiModel        String?
+  resendApiKey   String?
+
+  // Sender identity used by the AI message engine
+  senderName     String?
+  senderTitle    String?
+  defaultContext String?     @db.Text
+  defaultTone    MessageTone @default(FRIENDLY_DIRECT)
+
+  // Safety guardrails for human-in-the-loop LinkedIn sending.
+  // These CAP how much the operator can send per day; they never bypass anything.
+  dailyConnectionLimit Int @default(20)
+  dailyMessageLimit    Int @default(40)
+
+  // Autopilot: the cron may top up drafts and advance sequences on its own.
+  // It still never sends a LinkedIn message — a human does that.
+  autopilotEnabled     Boolean @default(false)
+  autopilotQueueTarget Int     @default(25)
+  timezone             String  @default("UTC")
+
+  updatedAt DateTime @updatedAt
+}
+
+enum MessageTone {
+  FRIENDLY_DIRECT
+  FORMAL
+  CASUAL
+  CONSULTATIVE
+  BLUNT
 }
 
 model Campaign {
-  id                 String         @id @default(cuid())
+  id                 String          @id @default(cuid())
   name               String
-  status             CampaignStatus @default(DRAFT)
+  status             CampaignStatus  @default(DRAFT)
   heyreachCampaignId Int?
+  offerContext       String?         @db.Text
+  fromName           String?
+  fromEmail          String?
   workspaceId        String
-  workspace   Workspace      @relation(fields: [workspaceId], references: [id])
-  userId      String
-  user        User           @relation(fields: [userId], references: [id])
-  leads       Lead[]
-  sequences   Sequence[]
-  sentCount   Int            @default(0)
-  totalCount  Int            @default(0)
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
+  workspace          Workspace       @relation(fields: [workspaceId], references: [id])
+  userId             String
+  user               User            @relation(fields: [userId], references: [id])
+  leads              Lead[]
+  sequences          Sequence[]
+  queueItems         SendQueueItem[]
+  activities         Activity[]
+
+  // How much of this campaign runs without a human in the loop.
+  mode              CampaignMode     @default(MANUAL_QUEUE)
+  autoEnroll        Boolean          @default(false)
+  defaultSequenceId String?
+  senders           CampaignSender[]
+  importBatches     ImportBatch[]
+  automationRules   AutomationRule[]
+  sentCount         Int              @default(0)
+  totalCount        Int              @default(0)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
 }
 
 enum AIProvider {
@@ -71,19 +113,42 @@ enum CampaignStatus {
 }
 
 model Lead {
-  id          String     @id @default(cuid())
-  firstName   String
-  lastName    String?
-  email       String?
-  linkedinUrl String?
-  company     String?
-  jobTitle    String?
-  status      LeadStatus @default(NEW)
-  campaignId  String?
-  campaign    Campaign?  @relation(fields: [campaignId], references: [id])
-  messages    Message[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  id            String              @id @default(cuid())
+  workspaceId   String?
+  firstName     String
+  lastName      String?
+  email         String?
+  linkedinUrl   String?
+  company       String?
+  jobTitle      String?
+  phone         String?
+  location      String?
+  industry      String?
+  customFields  Json?
+  source        ImportSource        @default(MANUAL)
+  importBatchId String?
+  importBatch   ImportBatch?        @relation(fields: [importBatchId], references: [id])
+  status        LeadStatus          @default(NEW)
+  unsubscribed  Boolean             @default(false)
+  campaignId    String?
+  campaign      Campaign?           @relation(fields: [campaignId], references: [id])
+  messages      Message[]
+  enrollment    SequenceEnrollment?
+  queueItems    SendQueueItem[]
+  activities    Activity[]
+
+  connectedAt DateTime?
+  repliedAt   DateTime?
+  lastTouchAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([campaignId, status])
+  @@index([workspaceId, status])
+  @@index([email])
+  @@index([linkedinUrl])
+  @@index([importBatchId])
 }
 
 enum LeadStatus {
@@ -97,23 +162,25 @@ enum LeadStatus {
 }
 
 model Sequence {
-  id         String         @id @default(cuid())
-  name       String
-  steps      SequenceStep[]
-  campaignId String
-  campaign   Campaign       @relation(fields: [campaignId], references: [id])
-  createdAt  DateTime       @default(now())
+  id          String               @id @default(cuid())
+  name        String
+  steps       SequenceStep[]
+  enrollments SequenceEnrollment[]
+  campaignId  String
+  campaign    Campaign             @relation(fields: [campaignId], references: [id])
+  createdAt   DateTime             @default(now())
 }
 
 model SequenceStep {
-  id         String      @id @default(cuid())
+  id         String   @id @default(cuid())
   sequenceId String
-  sequence   Sequence    @relation(fields: [sequenceId], references: [id])
+  sequence   Sequence @relation(fields: [sequenceId], references: [id])
   stepNumber Int
   type       StepType
-  template   String      @db.Text
-  delayDays  Int         @default(1)
-  createdAt  DateTime    @default(now())
+  subject    String?
+  template   String   @db.Text
+  delayDays  Int      @default(1)
+  createdAt  DateTime @default(now())
 }
 
 enum StepType {
@@ -123,15 +190,41 @@ enum StepType {
   FOLLOW_UP
 }
 
+model SequenceEnrollment {
+  id          String           @id @default(cuid())
+  leadId      String           @unique
+  lead        Lead             @relation(fields: [leadId], references: [id])
+  sequenceId  String
+  sequence    Sequence         @relation(fields: [sequenceId], references: [id])
+  currentStep Int              @default(0)
+  status      EnrollmentStatus @default(ACTIVE)
+  nextSendAt  DateTime?
+  // Consecutive transient send failures. Reset on any successful step; the
+  // engine stops the enrollment once it crosses the retry ceiling.
+  failureCount Int             @default(0)
+  lastError    String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  NEEDS_REVIEW
+  STOPPED
+  COMPLETED
+}
+
 model Message {
-  id        String        @id @default(cuid())
-  leadId    String
-  lead      Lead          @relation(fields: [leadId], references: [id])
-  content   String        @db.Text
-  type      MessageType
-  status    MessageStatus @default(PENDING)
-  sentAt    DateTime?
-  createdAt DateTime      @default(now())
+  id              String           @id @default(cuid())
+  leadId          String
+  lead            Lead             @relation(fields: [leadId], references: [id])
+  content         String           @db.Text
+  type            MessageType
+  direction       MessageDirection @default(OUTBOUND)
+  status          MessageStatus    @default(PENDING)
+  resendMessageId String?
+  sentAt          DateTime?
+  createdAt       DateTime         @default(now())
 }
 
 enum MessageType {
@@ -140,10 +233,307 @@ enum MessageType {
   EMAIL
 }
 
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
 enum MessageStatus {
   PENDING
   SENT
   DELIVERED
   FAILED
   REPLIED
+}
+
+/// A single AI-drafted message waiting for a human to review and send.
+/// Nothing in this app talks to LinkedIn: the operator copies the text,
+/// sends it in their own browser, then marks it sent here.
+model SendQueueItem {
+  id          String    @id @default(cuid())
+  workspaceId String
+  leadId      String
+  lead        Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id])
+
+  linkedInAccountId String?
+  linkedInAccount   LinkedInAccount? @relation(fields: [linkedInAccountId], references: [id])
+
+  channel    QueueChannel
+  stepNumber Int          @default(0)
+  // Email drafts carry their own subject line; LinkedIn channels leave it null.
+  subject    String?
+  content    String       @db.Text
+  aiModel    String?
+  edited     Boolean      @default(false)
+
+  status       QueueStatus @default(DRAFT)
+  scheduledFor DateTime?
+  sentAt       DateTime?
+  skipReason   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([leadId, channel, stepNumber])
+  @@index([workspaceId, status, channel])
+  @@index([campaignId, status])
+  @@index([linkedInAccountId, status, sentAt])
+}
+
+enum QueueChannel {
+  LINKEDIN_CONNECTION
+  LINKEDIN_MESSAGE
+  EMAIL
+}
+
+enum QueueStatus {
+  DRAFT
+  READY
+  SENT
+  SKIPPED
+}
+
+/// Append-only event log. Every dashboard number is derived from this table,
+/// so analytics stay correct even if a lead is later edited or re-enrolled.
+model Activity {
+  id          String    @id @default(cuid())
+  workspaceId String
+  leadId      String?
+  lead        Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id])
+
+  type       ActivityType
+  channel    QueueChannel?
+  stepNumber Int?
+  note       String?       @db.Text
+  createdAt  DateTime      @default(now())
+
+  @@index([workspaceId, type, createdAt])
+  @@index([campaignId, type])
+}
+
+enum ActivityType {
+  QUEUED
+  SENT
+  CONNECTION_ACCEPTED
+  REPLIED
+  INTERESTED
+  NOT_INTERESTED
+  MEETING_BOOKED
+  UNSUBSCRIBED
+  SKIPPED
+}
+
+// ---------------------------------------------------------------------------
+// Sender accounts
+//
+// A LinkedInAccount is an *identity the operator sends as* — never a set of
+// LinkedIn credentials. We deliberately store no password and no session
+// cookie: automating a login is against LinkedIn's terms and is the fastest
+// way to get an account restricted. Real sending is either done by the human
+// or delegated to HeyReach, which owns that relationship.
+// ---------------------------------------------------------------------------
+model LinkedInAccount {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+
+  name         String
+  email        String?
+  profileUrl   String?
+  avatarUrl    String?
+  subscription SenderPlan @default(FREE)
+
+  provider          SenderProvider @default(MANUAL)
+  heyreachAccountId Int?
+
+  status    SenderStatus @default(ACTIVE)
+  isDefault Boolean      @default(false)
+  timezone  String       @default("UTC")
+
+  dailyConnectionLimit  Int @default(20)
+  dailyMessageLimit     Int @default(40)
+  dailyInMailLimit      Int @default(0)
+  dailyProfileViewLimit Int @default(40)
+
+  /// Warm-up ramps the caps from ~30% up to 100% over warmupDays.
+  warmupEnabled Boolean   @default(true)
+  warmupDays    Int       @default(14)
+  warmupStartAt DateTime?
+
+  /// [{ day: 0-6, enabled: bool, startHour: 0-23, endHour: 1-24 }]
+  workingHours Json?
+
+  lastSyncedAt DateTime?
+  lastErrorAt  DateTime?
+  lastError    String?
+
+  queueItems SendQueueItem[]
+  campaigns  CampaignSender[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([workspaceId, heyreachAccountId])
+  @@index([workspaceId, status])
+}
+
+enum SenderProvider {
+  MANUAL
+  HEYREACH
+}
+
+enum SenderStatus {
+  ACTIVE
+  PAUSED
+  DISCONNECTED
+  NEEDS_ATTENTION
+}
+
+enum SenderPlan {
+  FREE
+  PREMIUM
+  SALES_NAVIGATOR
+  RECRUITER
+}
+
+/// Which sender accounts a campaign rotates through, and how heavily.
+model CampaignSender {
+  id         String          @id @default(cuid())
+  campaignId String
+  campaign   Campaign        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  accountId  String
+  account    LinkedInAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  weight     Int             @default(1)
+  createdAt  DateTime        @default(now())
+
+  @@unique([campaignId, accountId])
+}
+
+enum CampaignMode {
+  /// AI drafts, a human reviews and sends every LinkedIn touch.
+  MANUAL_QUEUE
+  /// Leads and steps are pushed to HeyReach, which does the sending.
+  AUTO_HEYREACH
+  /// Email steps go out automatically through Resend.
+  AUTO_EMAIL
+  /// Email automatic, LinkedIn still human-reviewed.
+  HYBRID
+}
+
+// ---------------------------------------------------------------------------
+// Lead import
+// ---------------------------------------------------------------------------
+model ImportBatch {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id])
+
+  fileName String
+  fileType String
+  source   ImportSource @default(FILE)
+
+  totalRows Int @default(0)
+  imported  Int @default(0)
+  updated   Int @default(0)
+  skipped   Int @default(0)
+  failed    Int @default(0)
+
+  status  ImportStatus @default(PENDING)
+  /// The column mapping actually applied, so a bad import can be explained.
+  mapping Json?
+  errors  Json?
+
+  leads       Lead[]
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  @@index([workspaceId, createdAt])
+}
+
+enum ImportStatus {
+  PENDING
+  PARSED
+  COMPLETED
+  FAILED
+}
+
+enum ImportSource {
+  FILE
+  PASTE
+  AI_EXTRACT
+  HEYREACH
+  MANUAL
+}
+
+// ---------------------------------------------------------------------------
+// Automation
+// ---------------------------------------------------------------------------
+model AutomationRule {
+  id          String    @id @default(cuid())
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id])
+  campaignId  String?
+  campaign    Campaign? @relation(fields: [campaignId], references: [id])
+
+  name        String
+  description String?
+  enabled     Boolean           @default(true)
+  trigger     AutomationTrigger
+
+  /// { leadStatus?: LeadStatus[], daysSinceLastTouch?: number,
+  ///   channel?: QueueChannel, hasLinkedIn?: bool, hasEmail?: bool }
+  conditions Json?
+  /// [{ type: AutomationActionType, params: {...} }]
+  actions    Json
+
+  priority  Int       @default(100)
+  lastRunAt DateTime?
+  runCount  Int       @default(0)
+
+  runs      AutomationRun[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([workspaceId, enabled, trigger])
+}
+
+enum AutomationTrigger {
+  LEAD_IMPORTED
+  LEAD_STATUS_CHANGED
+  CONNECTION_ACCEPTED
+  REPLY_RECEIVED
+  NO_REPLY_AFTER_DAYS
+  QUEUE_LOW
+  SCHEDULE
+}
+
+model AutomationRun {
+  id          String          @id @default(cuid())
+  workspaceId String
+  ruleId      String?
+  rule        AutomationRule? @relation(fields: [ruleId], references: [id], onDelete: Cascade)
+
+  trigger    AutomationTrigger
+  status     RunStatus         @default(SUCCESS)
+  affected   Int               @default(0)
+  message    String?
+  detail     Json?
+  durationMs Int?
+  createdAt  DateTime          @default(now())
+
+  @@index([workspaceId, createdAt])
+  @@index([ruleId, createdAt])
+}
+
+enum RunStatus {
+  SUCCESS
+  PARTIAL
+  FAILED
+  SKIPPED
 }

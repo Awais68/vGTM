@@ -12,7 +12,7 @@ export default async function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4 pt-24 pb-8">
       <div className="w-full max-w-sm">
         <AdminLoginForm />
       </div>

@@ -1,7 +1,8 @@
 import { streamText } from 'ai'
 import { getAIModel } from '@/lib/ai/get-client'
+import { aiCallOptions, describeAiError } from '@/lib/ai/timeout'
 import { NextRequest } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { requireWorkspace } from '@/lib/auth/get-current-user'
 import { z } from 'zod'
 import { prisma } from '@/lib/prisma'
 
@@ -15,17 +16,13 @@ const bodySchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+    const dbUser = await requireWorkspace()
+    if (!dbUser) return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
 
     const body = bodySchema.parse(await req.json())
 
     const lead = await prisma.lead.findUnique({ where: { id: body.leadId } })
     if (!lead) return Response.json({ success: false, error: 'Lead not found' }, { status: 404 })
-
-    const dbUser = await prisma.user.findUnique({ where: { email: user.email! } })
-    if (!dbUser) return Response.json({ success: false, error: 'User not found' }, { status: 404 })
 
     const model = await getAIModel(dbUser.workspaceId)
 
@@ -36,13 +33,14 @@ export async function POST(req: NextRequest) {
     }
 
     const result = streamText({
+      ...aiCallOptions(),
       model,
       prompt: prompts[body.type],
     })
 
-    return result.toDataStreamResponse()
+    return result.toTextStreamResponse()
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'AI generation failed'
+    const message = describeAiError(err)
     return Response.json({ success: false, error: message }, { status: 500 })
   }
 }

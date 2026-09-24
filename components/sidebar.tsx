@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import { LayoutDashboard, Snowflake, Linkedin, Database, Search, TrendingUp, Settings, ChevronDown } from "lucide-react"
+import type { LucideIcon } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { useState } from "react"
@@ -11,20 +12,23 @@ interface SidebarProps {
   onViewChange: (view: string) => void
 }
 
+interface MenuItem {
+  id: string
+  label: string
+  icon: LucideIcon
+  /** A group header. Only set it together with a non-empty `submenu`. */
+  hasSubmenu?: boolean
+  isOpen?: boolean
+  onToggle?: () => void
+  submenu?: { id: string; label: string }[]
+}
+
 export function Sidebar({ activeView, onViewChange }: SidebarProps) {
-  const [coldOutreachOpen, setColdOutreachOpen] = useState(false)
   const [linkedinOpen, setLinkedinOpen] = useState(true)
 
-  const menuItems = [
+  const menuItems: MenuItem[] = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    {
-      id: "cold-outreach",
-      label: "Cold Outreach",
-      icon: Snowflake,
-      hasSubmenu: true,
-      isOpen: coldOutreachOpen,
-      onToggle: () => setColdOutreachOpen(!coldOutreachOpen),
-    },
+    { id: "cold-outreach", label: "Cold Outreach", icon: Snowflake },
     {
       id: "linkedin",
       label: "LinkedIn",
@@ -34,10 +38,14 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
       onToggle: () => setLinkedinOpen(!linkedinOpen),
       submenu: [
         { id: "linkedin-accounts", label: "LinkedIn Accounts" },
+        { id: "send-queue", label: "Send Queue" },
         { id: "leads", label: "Leads" },
+        { id: "import-leads", label: "Import Leads" },
         { id: "my-network", label: "My network" },
         { id: "campaigns", label: "Campaigns" },
         { id: "inbox", label: "Inbox" },
+        { id: "needs-review", label: "Needs Review" },
+        { id: "automation", label: "Automation" },
       ],
     },
     { id: "ad-data", label: "Ad Data", icon: Database },
@@ -62,7 +70,7 @@ export function Sidebar({ activeView, onViewChange }: SidebarProps) {
       <nav className="flex-1 px-2">
         {menuItems.map((item) => (
           <div key={item.id}>
-            {item.hasSubmenu ? (
+            {item.hasSubmenu && item.submenu?.length ? (
               <Collapsible open={item.isOpen} onOpenChange={item.onToggle}>
                 <CollapsibleTrigger asChild>
                   <Button

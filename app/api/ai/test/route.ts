@@ -1,5 +1,6 @@
 import { generateText } from 'ai'
 import { getLanguageModel, AIConfig, AIProvider } from '@/lib/ai/providers'
+import { aiCallOptions, describeAiError } from '@/lib/ai/timeout'
 import { NextRequest } from 'next/server'
 
 const bodySchema = {
@@ -40,6 +41,7 @@ export async function POST(req: NextRequest) {
     const languageModel = getLanguageModel(config)
 
     const { text } = await generateText({
+      ...aiCallOptions(),
       model: languageModel,
       prompt: "Say 'vGTM AI is working!' and nothing else.",
     })
@@ -51,7 +53,7 @@ export async function POST(req: NextRequest) {
       model: model || '(default)',
     })
   } catch (err) {
-    const message = err instanceof Error ? err.message : 'AI test failed'
+    const message = describeAiError(err)
     return Response.json({ success: false, error: message }, { status: 500 })
   }
 }

@@ -32,6 +32,20 @@ export interface CampaignMetrics {
   connectionRate: number
 }
 
+export interface HeyReachLinkedInAccount {
+  id: number
+  emailAddress?: string
+  firstName?: string
+  lastName?: string
+  fullName?: string
+  profileUrl?: string
+  profileImage?: string
+  isActive?: boolean
+  status?: string
+  /** "Free" | "Premium" | "SalesNavigator" | "Recruiter" as HeyReach reports it. */
+  accountType?: string
+}
+
 export interface HeyReachApiResponse<T> {
   success: boolean
   data?: T

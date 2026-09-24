@@ -15,17 +15,30 @@ interface Props {
   senderName: string
   senderTitle: string
   messageContent: string
+  leadId: string
   unsubscribeToken: string
 }
+
+// AI drafts often open with their own "Hi Sara," and close with a sign-off.
+// Adding ours on top would print the greeting or signature twice.
+const OPENS_WITH_GREETING = /^\s*(hi|hello|hey|dear|good (morning|afternoon|evening))\b/i
+// A sign-off on its own line ("Best," / "Thanks,"), optionally followed by up
+// to two short lines of name/title.
+const ENDS_WITH_SIGNOFF =
+  /(^|\n)\s*(best( regards)?|kind regards|regards|cheers|thanks|thank you|sincerely|warmly|talk soon)[ !.,]*(\n[^\n]{0,60}){0,2}\s*$/i
 
 export default function OutreachEmail({
   firstName,
   senderName,
   senderTitle,
   messageContent,
+  leadId,
   unsubscribeToken,
 }: Props) {
-  const unsubscribeUrl = `${process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"}/api/email/unsubscribe?token=${unsubscribeToken}`
+  const unsubscribeUrl = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"}/api/email/unsubscribe?leadId=${leadId}&token=${unsubscribeToken}`
+
+  const hasGreeting = OPENS_WITH_GREETING.test(messageContent)
+  const hasSignoff = ENDS_WITH_SIGNOFF.test(messageContent.trimEnd())
 
   return (
     <Html>
@@ -34,19 +47,27 @@ export default function OutreachEmail({
       <Body style={body}>
         <Container style={container}>
           <Section>
-            <Text style={greeting}>Hi {firstName},</Text>
+            {!hasGreeting && <Text style={greeting}>Hi {firstName},</Text>}
             <Text style={paragraph}>{messageContent}</Text>
           </Section>
-          <Hr style={hr} />
-          <Section>
-            <Text style={signature}>
-              Best regards,
-              <br />
-              {senderName}
-              <br />
-              {senderTitle}
-            </Text>
-          </Section>
+          {!hasSignoff && (
+            <>
+              <Hr style={hr} />
+              <Section>
+                <Text style={signature}>
+                  Best regards,
+                  <br />
+                  {senderName}
+                  {senderTitle && (
+                    <>
+                      <br />
+                      {senderTitle}
+                    </>
+                  )}
+                </Text>
+              </Section>
+            </>
+          )}
           <Hr style={hr} />
           <Section style={footer}>
             <Link href={unsubscribeUrl} style={unsubscribeLink}>

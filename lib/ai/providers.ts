@@ -1,3 +1,4 @@
+import { getAppUrl } from "@/lib/app-url"
 import { createOpenAI } from '@ai-sdk/openai'
 import { createGoogleGenerativeAI } from '@ai-sdk/google'
 import { LanguageModel } from 'ai'
@@ -10,9 +11,12 @@ export interface AIConfig {
   model: string
 }
 
+// Zero-cost defaults. Gemini's own API has a free tier; OpenRouter ":free"
+// models cost nothing but are rate limited. Override per workspace in the
+// Admin Panel, or globally with AI_MODEL.
 export const DEFAULT_MODELS: Record<AIProvider, string> = {
-  OPENROUTER: 'google/gemini-flash-1.5',
-  GEMINI: 'gemini-1.5-flash',
+  OPENROUTER: 'deepseek/deepseek-v4-flash-0731:free',
+  GEMINI: 'gemini-2.0-flash',
   OPENAI: 'gpt-4o-mini',
 }
 
@@ -23,7 +27,7 @@ export function getLanguageModel(config: AIConfig): LanguageModel {
         baseURL: 'https://openrouter.ai/api/v1',
         apiKey: config.apiKey,
         headers: {
-          'HTTP-Referer': process.env.NEXT_PUBLIC_APP_URL ?? 'http://localhost:3000',
+          'HTTP-Referer': getAppUrl(),
           'X-Title': 'vGTM Outreach',
         },
       })

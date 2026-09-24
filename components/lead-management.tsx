@@ -1,170 +1,168 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
+import { LoadErrorState } from "@/components/ui/load-error-state"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Search, Download, Upload, List, Settings, Trash2, Mail, ExternalLink } from "lucide-react"
+import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import { Search, ExternalLink, Loader2, MoreHorizontal } from "lucide-react"
+import { toast } from "sonner"
+
+type Outcome =
+  | "CONNECTION_ACCEPTED"
+  | "REPLIED"
+  | "INTERESTED"
+  | "NOT_INTERESTED"
+  | "MEETING_BOOKED"
+  | "UNSUBSCRIBED"
+
+const OUTCOME_LABELS: { value: Outcome; label: string }[] = [
+  { value: "CONNECTION_ACCEPTED", label: "Connection accepted" },
+  { value: "REPLIED", label: "Replied" },
+  { value: "INTERESTED", label: "Interested" },
+  { value: "MEETING_BOOKED", label: "Meeting booked" },
+  { value: "NOT_INTERESTED", label: "Not interested" },
+  { value: "UNSUBSCRIBED", label: "Unsubscribe / do not contact" },
+]
+
+interface CampaignOption {
+  id: string
+  name: string
+}
 
 interface Lead {
   id: string
-  fullName: string
-  headline: string
-  jobTitle: string
-  company: string
-  location: string
-  emailAddress?: string
-  linkedinUrl: string
-  about: string
-  avatar?: string
+  firstName: string
+  lastName: string | null
+  email: string | null
+  company: string | null
+  jobTitle: string | null
+  linkedinUrl: string | null
+  status: string
+  unsubscribed: boolean
+  enrollment: { status: string; currentStep: number; nextSendAt: string | null } | null
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  NEW: "bg-gray-100 text-gray-700",
+  CONTACTED: "bg-blue-100 text-blue-700",
+  CONNECTED: "bg-blue-100 text-blue-700",
+  REPLIED: "bg-purple-100 text-purple-700",
+  INTERESTED: "bg-green-100 text-green-700",
+  NOT_INTERESTED: "bg-red-100 text-red-700",
+  PROPOSAL_SENT: "bg-cyan-100 text-cyan-700",
 }
 
 export function LeadManagement() {
   const [searchQuery, setSearchQuery] = useState("")
-  const [selectedLeads, setSelectedLeads] = useState<string[]>([])
+  const [campaigns, setCampaigns] = useState<CampaignOption[]>([])
+  const [selectedCampaign, setSelectedCampaign] = useState<string>("")
+  const [leads, setLeads] = useState<Lead[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [campaignsVersion, setCampaignsVersion] = useState(0)
 
-  const leads: Lead[] = [
-    {
-      id: "1",
-      fullName: "SN Hridoy",
-      headline: "🚀 Helping Age...",
-      jobTitle: "Digital Marketing...",
-      company: "Sell Squads",
-      location: "Dhaka, Bangladesh",
-      linkedinUrl: "https://www.linkedin.com/in/snhridoy",
-      about: "Hey!! My Name Is ...",
-      avatar: "/professional-man.png",
-    },
-    {
-      id: "2",
-      fullName: "Bilal Rafique",
-      headline: "Scaling SaaS wit...",
-      jobTitle: "Lead Generation",
-      company: "Fiverr",
-      location: "Sahiwal District",
-      linkedinUrl: "https://www.linkedin.com/in/bilalrafique",
-      about: "/",
-      avatar: "/professional-man-2.png",
-    },
-    {
-      id: "3",
-      fullName: "Haider Mansoor",
-      headline: "USA Real Estate ...",
-      jobTitle: "/",
-      company: "/",
-      location: "Karachi Division",
-      linkedinUrl: "https://www.linkedin.com/in/haidermansoor",
-      about: "/",
-      avatar: "/professional-man-3.png",
-    },
-    {
-      id: "4",
-      fullName: "Usman Tahir",
-      headline: "Digital Marketing...",
-      jobTitle: "Chief Technology...",
-      company: "MasDevs",
-      location: "Pakpattan District",
-      linkedinUrl: "https://www.linkedin.com/in/usmantahir",
-      about: "/",
-      avatar: "/professional-man-4.jpg",
-    },
-    {
-      id: "5",
-      fullName: "Areej Mahmood",
-      headline: "Lead Generating...",
-      jobTitle: "Copywriter",
-      company: "Upwork",
-      location: "Lahore",
-      linkedinUrl: "https://www.linkedin.com/in/areejmahmood",
-      about: "/",
-      avatar: "/professional-woman-diverse.png",
-    },
-    {
-      id: "6",
-      fullName: "Ayesha Noman",
-      headline: "Lead Generation...",
-      jobTitle: "/",
-      company: "/",
-      location: "Karachi Division",
-      linkedinUrl: "https://www.linkedin.com/in/ayeshanoman",
-      about: "/",
-      avatar: "/professional-woman-2.png",
-    },
-    {
-      id: "7",
-      fullName: "Fiaz Ahmad",
-      headline: "Lead Generation...",
-      jobTitle: "/",
-      company: "/",
-      location: "Dera Ghazi Khan",
-      linkedinUrl: "https://www.linkedin.com/in/fiazmad",
-      about: "/",
-      avatar: "/professional-man-5.jpg",
-    },
-    {
-      id: "8",
-      fullName: "Syed Bilal Hussain",
-      headline: "🚀 Founder at K...",
-      jobTitle: "Founder",
-      company: "KodersKube",
-      location: "Karachi",
-      linkedinUrl: "https://www.linkedin.com/in/syedbilalhussain",
-      about: "/",
-      avatar: "/professional-man-6.jpg",
-    },
-    {
-      id: "9",
-      fullName: "Nasir Ali",
-      headline: "Lead Generation...",
-      jobTitle: "Co-Founder & L...",
-      company: "ListPark - Lead ...",
-      location: "Rawalpindi",
-      linkedinUrl: "https://www.linkedin.com/in/nasirali",
-      about: "/",
-      avatar: "/professional-man-7.jpg",
-    },
-    {
-      id: "10",
-      fullName: "Arsalan Farooq",
-      headline: "I help B2B busin...",
-      jobTitle: "Founder",
-      company: "AB Digital Growth",
-      location: "Karachi",
-      linkedinUrl: "https://www.linkedin.com/in/arsalanfarooq",
-      about: "Welcome! This is ...",
-      avatar: "/professional-man-8.jpg",
-    },
-  ]
+  useEffect(() => {
+    async function fetchCampaigns() {
+      setLoadError(null)
+      try {
+        const response = await fetch("/api/campaigns")
+        const json = await response.json()
+        if (!json.success) {
+          setLoadError(json.error ?? "Could not load campaigns")
+          return
+        }
+        const data: CampaignOption[] = json.data ?? []
+        setCampaigns(data)
+        if (data.length > 0) setSelectedCampaign(data[0].id)
+      } catch {
+        // Without campaigns the table would read "create a campaign to get
+        // started", which is wrong when the request failed.
+        setLoadError("Could not load campaigns. Check that the database is reachable.")
+      }
+    }
+    fetchCampaigns()
+  }, [campaignsVersion])
 
-  const toggleLeadSelection = (leadId: string) => {
-    setSelectedLeads((prev) => (prev.includes(leadId) ? prev.filter((id) => id !== leadId) : [...prev, leadId]))
+  const fetchLeads = useCallback(async () => {
+    if (!selectedCampaign) {
+      setLeads([])
+      return
+    }
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const response = await fetch(`/api/leads?campaignId=${selectedCampaign}`)
+      const json = await response.json()
+      if (json.success) setLeads(json.data)
+      else setLoadError(json.error ?? "Could not load leads")
+    } catch {
+      setLoadError("Could not load leads. Check that the database is reachable.")
+    } finally {
+      setLoading(false)
+    }
+  }, [selectedCampaign])
+
+  useEffect(() => {
+    fetchLeads()
+  }, [fetchLeads])
+
+  async function markOutcome(leadId: string, outcome: Outcome) {
+    try {
+      const response = await fetch(`/api/leads/${leadId}/outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ outcome }),
+      })
+      const json = await response.json()
+      if (!json.success) {
+        toast.error(json.error ?? "Could not save that outcome")
+        return
+      }
+      // An outcome can also stop or pause the enrollment, so refetch the row
+      // rather than patching status locally.
+      await fetchLeads()
+      toast.success("Outcome logged")
+    } catch {
+      toast.error("Could not save that outcome")
+    }
   }
 
-  const toggleSelectAll = () => {
-    setSelectedLeads((prev) => (prev.length === leads.length ? [] : leads.map((lead) => lead.id)))
-  }
-
-  const filteredLeads = leads.filter(
-    (lead) =>
-      lead.fullName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.company.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      lead.headline.toLowerCase().includes(searchQuery.toLowerCase()),
-  )
+  const filteredLeads = leads.filter((lead) => {
+    const fullName = `${lead.firstName} ${lead.lastName ?? ""}`.toLowerCase()
+    const q = searchQuery.toLowerCase()
+    return (
+      fullName.includes(q) ||
+      (lead.company ?? "").toLowerCase().includes(q) ||
+      (lead.jobTitle ?? "").toLowerCase().includes(q)
+    )
+  })
 
   return (
     <div className="p-6">
       <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold">First Text</h1>
-          <Button variant="ghost" size="sm">
-            <Settings className="w-4 h-4" />
-          </Button>
-        </div>
-        <Button className="bg-cyan-500 hover:bg-cyan-600">
-          <Settings className="w-4 h-4 mr-2" />
-          Edit Columns
-        </Button>
+        <h1 className="text-2xl font-semibold">Leads</h1>
+        <Select value={selectedCampaign} onValueChange={setSelectedCampaign}>
+          <SelectTrigger className="w-64">
+            <SelectValue placeholder="Select a campaign..." />
+          </SelectTrigger>
+          <SelectContent>
+            {campaigns.map((c) => (
+              <SelectItem key={c.id} value={c.id}>
+                {c.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="flex items-center gap-4 mb-6">
@@ -177,26 +175,6 @@ export function LeadManagement() {
             onChange={(e) => setSearchQuery(e.target.value)}
           />
         </div>
-
-        <Button variant="outline">
-          <Download className="w-4 h-4 mr-2" />
-          Export to CSV
-        </Button>
-
-        <Button variant="outline">
-          <Download className="w-4 h-4 mr-2" />
-          Export to CRM
-        </Button>
-
-        <Button variant="outline">
-          <Upload className="w-4 h-4 mr-2" />
-          Import CSV
-        </Button>
-
-        <Button variant="outline">
-          <List className="w-4 h-4 mr-2" />
-          List Details
-        </Button>
       </div>
 
       <div className="bg-white rounded-lg border overflow-hidden">
@@ -204,133 +182,121 @@ export function LeadManagement() {
           <table className="w-full">
             <thead className="bg-gray-50 border-b">
               <tr>
-                <th className="text-left p-4 font-medium text-gray-600">
-                  <Checkbox checked={selectedLeads.length === leads.length} onCheckedChange={toggleSelectAll} />
-                </th>
                 <th className="text-left p-4 font-medium text-gray-600">Full Name</th>
-                <th className="text-left p-4 font-medium text-gray-600">Headline</th>
                 <th className="text-left p-4 font-medium text-gray-600">Job Title</th>
                 <th className="text-left p-4 font-medium text-gray-600">Company</th>
-                <th className="text-left p-4 font-medium text-gray-600">Location</th>
-                <th className="text-left p-4 font-medium text-gray-600">Email Address</th>
-                <th className="text-left p-4 font-medium text-gray-600">LinkedIn URL</th>
-                <th className="text-left p-4 font-medium text-gray-600">About</th>
-                <th className="text-left p-4 font-medium text-gray-600">Remove</th>
+                <th className="text-left p-4 font-medium text-gray-600">Email</th>
+                <th className="text-left p-4 font-medium text-gray-600">LinkedIn</th>
+                <th className="text-left p-4 font-medium text-gray-600">Status</th>
+                <th className="text-left p-4 font-medium text-gray-600">Sequence</th>
+                <th className="text-left p-4 font-medium text-gray-600">Log</th>
               </tr>
             </thead>
             <tbody>
-              {filteredLeads.map((lead) => (
-                <tr key={lead.id} className="border-b hover:bg-gray-50">
-                  <td className="p-4">
-                    <Checkbox
-                      checked={selectedLeads.includes(lead.id)}
-                      onCheckedChange={() => toggleLeadSelection(lead.id)}
-                    />
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-3">
-                      <Avatar className="w-10 h-10">
-                        <AvatarImage src={lead.avatar || "/placeholder.svg"} alt={lead.fullName} />
-                        <AvatarFallback className="bg-gray-200 text-gray-600">
-                          {lead.fullName
-                            .split(" ")
-                            .map((n) => n[0])
-                            .join("")}
-                        </AvatarFallback>
-                      </Avatar>
-                      <span className="font-medium">{lead.fullName}</span>
-                    </div>
-                  </td>
-                  <td className="p-4 max-w-xs">
-                    <div className="truncate" title={lead.headline}>
-                      {lead.headline}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="truncate" title={lead.jobTitle}>
-                      {lead.jobTitle}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="truncate" title={lead.company}>
-                      {lead.company}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <div className="truncate" title={lead.location}>
-                      {lead.location}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    {lead.emailAddress ? (
-                      <div className="flex items-center gap-2">
-                        <Mail className="w-4 h-4 text-gray-400" />
-                        <span className="text-sm">{lead.emailAddress}</span>
-                      </div>
-                    ) : (
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="text-cyan-600 border-cyan-200 hover:bg-cyan-50 bg-transparent"
-                      >
-                        <Mail className="w-4 h-4 mr-1" />
-                        Find email
-                      </Button>
-                    )}
-                  </td>
-                  <td className="p-4">
-                    <div className="flex items-center gap-2">
-                      <a
-                        href={lead.linkedinUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-cyan-600 hover:text-cyan-700 flex items-center gap-1"
-                      >
-                        <span className="truncate max-w-[150px]" title={lead.linkedinUrl}>
-                          {lead.linkedinUrl}
-                        </span>
-                        <ExternalLink className="w-3 h-3" />
-                      </a>
-                    </div>
-                  </td>
-                  <td className="p-4 max-w-xs">
-                    <div className="truncate" title={lead.about}>
-                      {lead.about}
-                    </div>
-                  </td>
-                  <td className="p-4">
-                    <Button variant="ghost" size="sm" className="text-red-500 hover:text-red-700 hover:bg-red-50">
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+              {loading ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-gray-400">
+                    <Loader2 className="w-5 h-5 animate-spin inline-block mr-2" />
+                    Loading leads...
                   </td>
                 </tr>
-              ))}
+              ) : loadError ? (
+                <tr>
+                  <td colSpan={8} className="p-0">
+                    <LoadErrorState
+                      message={loadError}
+                      onRetry={() => (selectedCampaign ? fetchLeads() : setCampaignsVersion((v) => v + 1))}
+                      bordered={false}
+                    />
+                  </td>
+                </tr>
+              ) : filteredLeads.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className="p-8 text-center text-gray-400">
+                    {campaigns.length === 0 ? "Create a campaign and import leads to get started." : "No leads found."}
+                  </td>
+                </tr>
+              ) : (
+                filteredLeads.map((lead) => (
+                  <tr key={lead.id} className="border-b hover:bg-gray-50">
+                    <td className="p-4 font-medium">
+                      {lead.firstName} {lead.lastName ?? ""}
+                    </td>
+                    <td className="p-4">
+                      <div className="truncate max-w-[160px]" title={lead.jobTitle ?? ""}>
+                        {lead.jobTitle ?? "-"}
+                      </div>
+                    </td>
+                    <td className="p-4">{lead.company ?? "-"}</td>
+                    <td className="p-4">{lead.email ?? "-"}</td>
+                    <td className="p-4">
+                      {lead.linkedinUrl ? (
+                        <a
+                          href={lead.linkedinUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-cyan-600 hover:text-cyan-700 flex items-center gap-1"
+                        >
+                          <span className="truncate max-w-[150px]">{lead.linkedinUrl}</span>
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      ) : (
+                        "-"
+                      )}
+                    </td>
+                    <td className="p-4">
+                      <Badge className={STATUS_COLORS[lead.status] ?? "bg-gray-100 text-gray-700"}>
+                        {lead.status}
+                      </Badge>
+                    </td>
+                    <td className="p-4">
+                      {lead.unsubscribed ? (
+                        <Badge className="bg-gray-200 text-gray-600">Unsubscribed</Badge>
+                      ) : lead.enrollment ? (
+                        <Badge
+                          className={
+                            lead.enrollment.status === "NEEDS_REVIEW"
+                              ? "bg-amber-100 text-amber-700"
+                              : lead.enrollment.status === "ACTIVE"
+                                ? "bg-green-100 text-green-700"
+                                : "bg-gray-100 text-gray-700"
+                          }
+                        >
+                          {lead.enrollment.status}
+                        </Badge>
+                      ) : (
+                        <span className="text-gray-400 text-sm">Not enrolled</span>
+                      )}
+                    </td>
+                    <td className="p-4">
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuLabel>Log what happened</DropdownMenuLabel>
+                          <DropdownMenuSeparator />
+                          {OUTCOME_LABELS.map((o) => (
+                            <DropdownMenuItem
+                              key={o.value}
+                              className={o.value === "UNSUBSCRIBED" ? "text-red-600" : ""}
+                              onClick={() => markOutcome(lead.id, o.value)}
+                            >
+                              {o.label}
+                            </DropdownMenuItem>
+                          ))}
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
       </div>
-
-      {selectedLeads.length > 0 && (
-        <div className="mt-4 p-4 bg-cyan-50 rounded-lg border border-cyan-200">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-cyan-700">
-              {selectedLeads.length} lead{selectedLeads.length !== 1 ? "s" : ""} selected
-            </span>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm">
-                Export Selected
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-red-600 border-red-200 hover:bg-red-50 bg-transparent"
-              >
-                Delete Selected
-              </Button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

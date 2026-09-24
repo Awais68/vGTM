@@ -1,80 +1,78 @@
 import { NextRequest, NextResponse } from "next/server"
-import { createClient } from "@/lib/supabase/server"
+import { requireWorkspace } from "@/lib/auth/get-current-user"
 import { prisma } from "@/lib/prisma"
-import { parseLeadsCSV, importLeadsToDB } from "@/lib/leads/import"
+import { applyMapping, commitImport } from "@/lib/leads/import"
+import { readImportInput, parseMappingField, ImportInputError } from "@/lib/leads/read-request"
+import { UnsupportedFileError, SUPPORTED_EXTENSIONS } from "@/lib/leads/parsers"
 import { getHeyReachClient } from "@/lib/heyreach/get-client"
+import { runTrigger } from "@/lib/automation/engine"
 
+export const maxDuration = 300
+
+/**
+ * Commits an import. Accepts a file (csv/tsv/xlsx/json/pdf/docx/txt) or a
+ * pasted list, plus the column mapping the operator confirmed in the preview.
+ * Without a mapping we fall back to auto-detection, which keeps the old
+ * CSV-only callers working.
+ */
 export async function POST(request: NextRequest) {
   try {
-    const supabase = await createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-
-    if (!user) {
-      return NextResponse.json(
-        { success: false, error: "Unauthorized", code: "UNAUTHORIZED" },
-        { status: 401 }
-      )
-    }
-
-    const dbUser = await prisma.user.findUnique({
-      where: { email: user.email! },
-      select: { id: true, workspaceId: true },
-    })
-
+    const dbUser = await requireWorkspace()
     if (!dbUser) {
-      return NextResponse.json(
-        { success: false, error: "User not found", code: "USER_NOT_FOUND" },
-        { status: 404 }
-      )
+      return NextResponse.json({ success: false, error: "Unauthorized", code: "UNAUTHORIZED" }, { status: 401 })
     }
 
     const formData = await request.formData()
-    const file = formData.get("file") as File | null
-    const campaignId = formData.get("campaignId") as string | null
+    const campaignIdRaw = formData.get("campaignId")
+    const campaignId = typeof campaignIdRaw === "string" && campaignIdRaw ? campaignIdRaw : null
+    const updateExisting = formData.get("updateExisting") !== "false"
+    const keepUnmappedColumns = formData.get("keepUnmappedColumns") === "true"
 
-    if (!file) {
-      return NextResponse.json(
-        { success: false, error: "No file uploaded", code: "NO_FILE" },
-        { status: 400 }
-      )
+    if (campaignId) {
+      const owned = await prisma.campaign.findFirst({
+        where: { id: campaignId, workspaceId: dbUser.workspaceId },
+        select: { id: true },
+      })
+      if (!owned) {
+        return NextResponse.json(
+          { success: false, error: "Campaign not found in this workspace", code: "CAMPAIGN_NOT_FOUND" },
+          { status: 404 }
+        )
+      }
     }
 
-    if (file.size > 5 * 1024 * 1024) {
-      return NextResponse.json(
-        { success: false, error: "File exceeds 5MB limit", code: "FILE_TOO_LARGE" },
-        { status: 400 }
-      )
-    }
+    const { table, mapping: detected, fileName } = await readImportInput(formData, dbUser.workspaceId)
+    const mapping = parseMappingField(formData.get("mapping")) ?? detected
 
-    if (file.type !== "text/csv" && !file.name.endsWith(".csv")) {
-      return NextResponse.json(
-        { success: false, error: "Only CSV files are accepted", code: "INVALID_TYPE" },
-        { status: 400 }
-      )
-    }
-
-    const csvContent = await file.text()
-    const { valid, errors: parseErrors } = parseLeadsCSV(csvContent)
+    const { valid, errors, duplicatesInFile } = applyMapping(table.rows, mapping, { keepUnmappedColumns })
 
     if (valid.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          error: "No valid leads found in CSV",
+          error: "No importable leads found — every row is missing a name, an email and a LinkedIn URL",
           code: "NO_VALID_LEADS",
-          data: { errors: parseErrors },
+          data: { errors: errors.slice(0, 50), warnings: table.warnings },
         },
         { status: 400 }
       )
     }
 
-    let importResult = { imported: 0, updated: 0, failed: 0, errors: [] as Array<{ row: number; message: string }> }
+    const result = await commitImport({
+      workspaceId: dbUser.workspaceId,
+      campaignId,
+      leads: valid,
+      source: table.source,
+      fileName,
+      fileType: table.fileType,
+      mapping,
+      totalRows: table.rows.length,
+      parseErrors: errors,
+      updateExisting,
+    })
 
-    if (campaignId) {
-      importResult = await importLeadsToDB(valid, campaignId)
-    }
-
-    let heyreachResult = { addedLeadsCount: 0, updatedLeadsCount: 0, failedLeadsCount: 0 }
+    // Push to HeyReach only when the campaign is actually wired to one.
+    let heyreach: { addedLeadsCount: number; updatedLeadsCount: number; failedLeadsCount: number } | null = null
 
     if (campaignId) {
       const campaign = await prisma.campaign.findUnique({
@@ -83,45 +81,61 @@ export async function POST(request: NextRequest) {
       })
 
       if (campaign?.heyreachCampaignId) {
-        try {
-          const client = await getHeyReachClient(dbUser.workspaceId)
-          heyreachResult = await client.addLeadsToCampaign(
-            campaign.heyreachCampaignId,
-            valid.map((l) => ({
-              firstName: l.firstName,
-              lastName: l.lastName ?? undefined,
-              linkedinUrl: l.linkedinUrl ?? "",
-              email: l.email ?? undefined,
-              company: l.company ?? undefined,
-              jobTitle: l.jobTitle ?? undefined,
-            }))
-          )
-        } catch {
-          importResult.errors.push({
-            row: 0,
-            message: "Failed to push leads to HeyReach campaign",
-          })
+        const withUrls = valid.filter((l) => l.linkedinUrl)
+        if (withUrls.length > 0) {
+          try {
+            const client = await getHeyReachClient(dbUser.workspaceId)
+            heyreach = await client.addLeadsToCampaign(
+              campaign.heyreachCampaignId,
+              withUrls.map((l) => ({
+                firstName: l.firstName,
+                lastName: l.lastName ?? undefined,
+                linkedinUrl: l.linkedinUrl!,
+                email: l.email ?? undefined,
+                company: l.company ?? undefined,
+                jobTitle: l.jobTitle ?? undefined,
+              }))
+            )
+          } catch (error) {
+            result.errors.push({
+              row: 0,
+              message: error instanceof Error ? error.message : "Failed to push leads to HeyReach",
+            })
+          }
         }
       }
     }
 
-    const allErrors = [...parseErrors, ...importResult.errors]
+    // Fire automation (auto-enroll, draft generation) for the new leads.
+    const automation = await runTrigger({
+      workspaceId: dbUser.workspaceId,
+      trigger: "LEAD_IMPORTED",
+      campaignId,
+      context: { importBatchId: result.batchId },
+    }).catch(() => null)
 
     return NextResponse.json({
       success: true,
       data: {
-        imported: importResult.imported,
-        updated: importResult.updated,
-        failed: importResult.failed + parseErrors.length,
-        heyreach: heyreachResult,
-        errors: allErrors,
+        ...result,
+        duplicatesInFile,
+        fileType: table.fileType,
+        warnings: table.warnings,
+        heyreach,
+        automation,
       },
     })
   } catch (error) {
+    if (error instanceof UnsupportedFileError) {
+      return NextResponse.json(
+        { success: false, error: error.message, code: "UNSUPPORTED_TYPE", data: { supported: SUPPORTED_EXTENSIONS } },
+        { status: 400 }
+      )
+    }
+    if (error instanceof ImportInputError) {
+      return NextResponse.json({ success: false, error: error.message, code: error.code }, { status: 400 })
+    }
     const message = error instanceof Error ? error.message : "An unexpected error occurred"
-    return NextResponse.json(
-      { success: false, error: message, code: "INTERNAL_ERROR" },
-      { status: 500 }
-    )
+    return NextResponse.json({ success: false, error: message, code: "INTERNAL_ERROR" }, { status: 500 })
   }
 }

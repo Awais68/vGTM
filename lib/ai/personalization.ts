@@ -1,4 +1,5 @@
-import { generateText, streamText } from 'ai'
+import { generateText } from 'ai'
+import { aiCallOptions } from './timeout'
 import { getAIModel } from './get-client'
 
 export interface Lead {
@@ -41,6 +42,7 @@ export async function generateLinkedInConnectionNote(
   const model = await getAIModel(workspaceId)
 
   const { text } = await generateText({
+    ...aiCallOptions(),
     model,
     prompt: `Write a LinkedIn connection request note. STRICT RULES:
 - Maximum 300 characters (this is a hard LinkedIn limit)
@@ -88,6 +90,7 @@ export async function generateFollowUpMessage(
   }
 
   const { text } = await generateText({
+    ...aiCallOptions(),
     model,
     prompt: `Write a LinkedIn follow-up message for a cold outreach sequence.
 
@@ -110,6 +113,7 @@ export async function classifyReply(
   const model = await getAIModel(workspaceId)
 
   const { text } = await generateText({
+    ...aiCallOptions(),
     model,
     prompt: `Classify this LinkedIn reply. Return ONLY valid JSON, no markdown, no explanation.
 
@@ -146,8 +150,9 @@ export async function generateProposal(
   const model = await getAIModel(workspaceId)
 
   const { text } = await generateText({
+    ...aiCallOptions(),
     model,
-    maxTokens: 800,
+    maxOutputTokens: 800,
     prompt: `Write a professional business proposal in clean markdown.
 
 Client info:
